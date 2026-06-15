@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950 text-slate-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FinanceGuard - Secure DevSecOps Dashboard</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            200: '#c7d2fe',
+                            300: '#a5b4fc',
+                            400: '#818cf8',
+                            50: '#6366f1', // Indigo
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            cyan: '#06b6d4',
+                            emerald: '#10b981',
+                            rose: '#f43f5e',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Outfit', 'Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        /* Custom scrollbar and glassmorphism styling */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.6);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(99, 102, 241, 0.4);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(99, 102, 241, 0.7);
+        }
+        .glass {
+            background: rgba(15, 23, 42, 0.45);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .glow-indigo {
+            box-shadow: 0 0 40px -10px rgba(99, 102, 241, 0.3);
+        }
+    </style>
+</head>
+<body class="h-full flex flex-col font-sans overflow-x-hidden antialiased">
+
+    <!-- Glowing background accents -->
+    <div class="absolute top-[-20%] left-[-10%] w-[50%] h-[60%] rounded-full bg-indigo-900/20 blur-[150px] pointer-events-none"></div>
+    <div class="absolute bottom-[-10%] right-[-10%] w-[50%] h-[60%] rounded-full bg-cyan-900/15 blur-[150px] pointer-events-none"></div>
+
+    <!-- Top Navigation -->
+    <header class="sticky top-0 z-40 w-full border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-cyan-500 flex items-center justify-center text-white shadow-lg shadow-indigo-500/20">
+                    <i class="fa-solid fa-shield-halved text-xl"></i>
+                </div>
+                <div>
+                    <span class="text-xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-100 to-indigo-400 bg-clip-text text-transparent">FinanceGuard</span>
+                    <span class="ml-2 px-2 py-0.5 text-[10px] uppercase font-bold tracking-widest text-cyan-400 bg-cyan-950/80 border border-cyan-800/60 rounded-full">DevSecOps</span>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-4">
+                <!-- Settings Button -->
+                <button onclick="toggleSettings()" class="p-2 hover:bg-slate-800/80 rounded-lg text-slate-400 hover:text-slate-200 transition-colors" title="API Settings">
+                    <i class="fa-solid fa-sliders text-lg"></i>
+                </button>
+                
+                <!-- Auth Container -->
+                <div id="auth-loading" class="text-slate-400 text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-circle-notch animate-spin text-indigo-500"></i> Authenticating...
+                </div>
+                
+                <div id="auth-signed-out" class="hidden">
+                    <button onclick="login()" class="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow-md shadow-indigo-600/10 hover:shadow-indigo-500/20 hover:scale-[1.02] transition-all">
+                        Sign In
+                    </button>
+                </div>
+                
+                <div id="auth-signed-in" class="hidden flex items-center gap-3">
+                    <div class="text-right hidden sm:block">
+                        <p id="user-name" class="text-sm font-medium text-slate-200"></p>
+                        <p id="user-email" class="text-[10px] text-slate-400"></p>
+                    </div>
+                    <img id="user-avatar" class="w-9 h-9 rounded-full border border-slate-700 object-cover" src="" alt="Avatar">
+                    <button onclick="logout()" class="p-2 hover:bg-slate-800/85 rounded-lg text-slate-400 hover:text-rose-400 transition-colors" title="Sign Out">
+                        <i class="fa-solid fa-right-from-bracket"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10 flex flex-col gap-8">
+        
+        <!-- Welcome / Warning Info Banner -->
+        <div id="connection-warning" class="hidden flex items-center gap-3 p-4 rounded-xl border border-amber-900/50 bg-amber-950/25 text-amber-200 text-sm">
+            <i class="fa-solid fa-triangle-exclamation text-amber-500 text-lg"></i>
+            <span>Warning: Backend service is currently unreachable at <strong id="warning-endpoint"></strong>. Using dummy offline data. Please check if your FastAPI backend is running.</span>
+        </div>
+
+        <!-- Dashboard Analytics -->
+        <section class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <!-- Balance Card -->
+            <div class="glass glow-indigo p-6 rounded-2xl relative overflow-hidden">
+                <div class="absolute right-6 top-6 w-12 h-12 rounded-xl bg-indigo-500/10 flex items-center justify-center text-indigo-400">
+                    <i class="fa-solid fa-wallet text-xl"></i>
+                </div>
+                <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Net Balance</h3>
+                <p id="balance-value" class="text-3xl font-bold mt-2 text-slate-100">$0.00</p>
+                <div class="mt-4 flex items-center gap-2 text-xs text-slate-400">
+                    <span class="text-indigo-400"><i class="fa-solid fa-arrow-trend-up"></i> Live updates</span>
+                    <span>synchronized securely</span>
+                </div>
+            </div>
+
+            <!-- Income Card -->
+            <div class="glass p-6 rounded-2xl relative overflow-hidden">
+                <div class="absolute right-6 top-6 w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400">
+                    <i class="fa-solid fa-circle-arrow-down text-xl"></i>
+                </div>
+                <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Monthly Inflow</h3>
+                <p id="income-value" class="text-3xl font-bold mt-2 text-emerald-400">$0.00</p>
+                <div class="mt-4 flex items-center gap-2 text-xs text-slate-400">
+                    <span class="text-emerald-400"><i class="fa-solid fa-shield-halved"></i> Clerk Secured</span>
+                    <span>Audit trail logging</span>
+                </div>
+            </div>
+
+            <!-- Expense Card -->
+            <div class="glass p-6 rounded-2xl relative overflow-hidden">
+                <div class="absolute right-6 top-6 w-12 h-12 rounded-xl bg-rose-500/10 flex items-center justify-center text-rose-400">
+                    <i class="fa-solid fa-circle-arrow-up text-xl"></i>
+                </div>
+                <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Monthly Outflow</h3>
+                <p id="expense-value" class="text-3xl font-bold mt-2 text-rose-400">$0.00</p>
+                <div class="mt-4 flex items-center gap-2 text-xs text-slate-400">
+                    <span class="text-rose-400"><i class="fa-solid fa-lock"></i> AES-256</span>
+                    <span>Encrypted transport</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Dashboard Actions and Table -->
+        <section class="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+            <!-- Add Transaction Card -->
+            <div class="glass p-6 rounded-2xl flex flex-col gap-6 lg:sticky lg:top-24">
+                <div>
+                    <h2 class="text-lg font-bold text-slate-100 flex items-center gap-2">
+                        <i class="fa-solid fa-plus-minus text-indigo-400"></i> New Transaction
+                    </h2>
+                    <p class="text-xs text-slate-400 mt-1">Record a new secure ledger transaction entry.</p>
+                </div>
+                
+                <form id="tx-form" onsubmit="handleFormSubmit(event)" class="flex flex-col gap-4">
+                    <div>
+                        <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5">Description</label>
+                        <input id="tx-desc" type="text" required placeholder="e.g. AWS Invoice June" class="w-full bg-slate-900/60 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors">
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5">Amount ($)</label>
+                            <input id="tx-amount" type="number" step="0.01" required placeholder="0.00" class="w-full bg-slate-900/60 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5">Category</label>
+                            <input id="tx-cat" type="text" required placeholder="e.g. Infrastructure" class="w-full bg-slate-900/60 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors">
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5">Transaction Type</label>
+                        <div class="grid grid-cols-2 gap-3">
+                            <label class="relative flex items-center justify-center p-3 rounded-xl border border-slate-800 bg-slate-900/30 cursor-pointer select-none text-sm text-slate-400 hover:border-slate-700 transition-all [&:has(input:checked)]:border-emerald-500/40 [&:has(input:checked)]:bg-emerald-950/20 [&:has(input:checked)]:text-emerald-300">
+                                <input type="radio" name="tx-type" value="income" checked class="sr-only">
+                                <i class="fa-solid fa-circle-arrow-down mr-2 text-emerald-500"></i> Income
+                            </label>
+                            <label class="relative flex items-center justify-center p-3 rounded-xl border border-slate-800 bg-slate-900/30 cursor-pointer select-none text-sm text-slate-400 hover:border-slate-700 transition-all [&:has(input:checked)]:border-rose-500/40 [&:has(input:checked)]:bg-rose-950/20 [&:has(input:checked)]:text-rose-300">
+                                <input type="radio" name="tx-type" value="expense" class="sr-only">
+                                <i class="fa-solid fa-circle-arrow-up mr-2 text-rose-500"></i> Expense
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-cyan-500 hover:from-indigo-500 hover:to-cyan-400 text-white font-semibold rounded-xl shadow-lg shadow-indigo-900/30 hover:shadow-indigo-500/20 hover:scale-[1.01] transition-all flex items-center justify-center gap-2 mt-2">
+                        <i class="fa-solid fa-lock-open text-xs"></i> Post Secured Entry
+                    </button>
+                </form>
+            </div>
+
+            <!-- Transaction History Table -->
+            <div class="glass p-6 rounded-2xl lg:col-span-2 flex flex-col gap-6">
+                <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+                    <div>
+                        <h2 class="text-lg font-bold text-slate-100 flex items-center gap-2">
+                            <i class="fa-solid fa-list-check text-indigo-400"></i> Secure Ledger Logs
+                        </h2>
+                        <p class="text-xs text-slate-400 mt-1">Immutable transaction ledger stored in backend database.</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                                <i class="fa-solid fa-magnifying-glass text-xs"></i>
+                            </span>
+                            <input id="search-filter" oninput="renderTransactions()" type="text" placeholder="Search logs..." class="bg-slate-900/60 border border-slate-800 rounded-lg pl-8 pr-4 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors w-44">
+                        </div>
+                        <button onclick="fetchTransactions()" class="p-2 bg-slate-900/80 border border-slate-800 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-200 transition-all" title="Refresh Table">
+                            <i class="fa-solid fa-rotate"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full border-collapse text-left text-xs">
+                        <thead>
+                            <tr class="border-b border-slate-800/80 text-slate-400 font-semibold uppercase tracking-wider">
+                                <th class="py-3 px-4">TX ID</th>
+                                <th class="py-3 px-4">Description</th>
+                                <th class="py-3 px-4">Category</th>
+                                <th class="py-3 px-4">Type</th>
+                                <th class="py-3 px-4 text-right">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tx-tbody" class="divide-y divide-slate-800/50 text-slate-300">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div id="no-tx-message" class="hidden py-10 flex flex-col items-center justify-center text-slate-500 text-center gap-3">
+                    <i class="fa-solid fa-folder-open text-3xl text-slate-700"></i>
+                    <p class="text-sm">No transactions found matching the security context.</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="mt-auto border-t border-slate-900 bg-slate-950/60 py-6 text-center text-xs text-slate-500">
+        <p>&copy; 2026 FinanceGuard Enterprise DevSecOps. Protected by Clerk Identity & JWT Verification.</p>
+    </footer>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="glass max-w-md w-full p-6 rounded-2xl shadow-2xl flex flex-col gap-5 border border-slate-800 animate-in fade-in zoom-in-95 duration-200">
+            <div class="flex justify-between items-center">
+                <h3 class="text-md font-bold text-slate-100 flex items-center gap-2">
+                    <i class="fa-solid fa-sliders text-indigo-400"></i> API & Auth Environment
+                </h3>
+                <button onclick="toggleSettings()" class="text-slate-500 hover:text-slate-300 transition-colors">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            
+            <div class="flex flex-col gap-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Backend API URL</label>
+                    <input id="setting-api-url" type="text" placeholder="http://localhost:8000" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors">
+                </div>
+                
+                <div>
+                    <div class="flex justify-between items-center mb-1.5">
+                        <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Clerk Publishable Key</label>
+                        <span class="text-[10px] text-slate-500 font-semibold uppercase">Optional</span>
+                    </div>
+                    <input id="setting-clerk-pk" type="text" placeholder="pk_test_..." class="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors">
+                </div>
+
+                <div class="bg-indigo-950/20 border border-indigo-900/30 rounded-xl p-4 text-[11px] text-indigo-300/95 leading-relaxed">
+                    <i class="fa-solid fa-circle-info mr-1.5"></i> If <strong>Clerk Publishable Key</strong> is blank, the app will run in <strong>Mock Mode</strong>, bypassing Clerk JS SDK constraints to let you explore the UI instantly.
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-2">
+                <button onclick="toggleSettings()" class="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-slate-200 rounded-lg hover:bg-slate-900 transition-all">
+                    Cancel
+                </button>
+                <button onclick="saveSettings()" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow-md shadow-indigo-600/10 hover:shadow-indigo-500/20 transition-all">
+                    Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-3"></div>
+
+    <!-- APP SCRIPT & ORCHESTRATION -->
+    <script>
+        // Default configs
+        let API_URL = localStorage.getItem("FG_API_URL") || "http://localhost:8000";
+        let CLERK_PK = localStorage.getItem("FG_CLERK_PK") || "";
+        let clerkInstance = null;
+        let isMockAuth = true;
+
+        // Current state
+        let currentUser = null;
+        let localToken = "mock-dev-token";
+        let transactions = [];
+
+        // Mock state database fallback
+        let offlineTransactions = [
+            {"id": 1, "description": "Consulting Wire Transfer", "amount": 4500.00, "category": "Consulting", "type": "income"},
+            {"id": 2, "description": "Cloud VPS Hosting Fee", "amount": -149.99, "category": "Hosting", "type": "expense"},
+            {"id": 3, "description": "Clerk Auth Subscription", "amount": -25.00, "category": "SaaS", "type": "expense"}
+        ];
+
+        // Toast Helper
+        function showToast(message, type = 'info') {
+            const container = document.getElementById("toast-container");
+            const toast = document.createElement("div");
+            toast.className = `glass px-4 py-3.5 rounded-xl shadow-xl flex items-center gap-3 border text-xs text-slate-200 animate-in slide-in-from-bottom-5 duration-200 min-w-[280px]`;
+            
+            let icon = '<i class="fa-solid fa-circle-info text-indigo-400"></i>';
+            if (type === 'success') {
+                toast.className += ' border-emerald-900/40 bg-emerald-950/20';
+                icon = '<i class="fa-solid fa-circle-check text-emerald-400"></i>';
+            } else if (type === 'error') {
+                toast.className += ' border-rose-900/40 bg-rose-950/20';
+                icon = '<i class="fa-solid fa-circle-exclamation text-rose-400"></i>';
+            } else {
+                toast.className += ' border-indigo-900/40 bg-indigo-950/20';
+            }
+
+            toast.innerHTML = `${icon} <div class="flex-1 font-medium">${message}</div>`;
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.classList.add("animate-out", "fade-out", "slide-out-to-right-10", "duration-200");
+                setTimeout(() => toast.remove(), 200);
+            }, 3500);
+        }
+
+        // Initialize Settings
+        document.getElementById("setting-api-url").value = API_URL;
+        document.getElementById("setting-clerk-pk").value = CLERK_PK;
+
+        function toggleSettings() {
+            const modal = document.getElementById("settings-modal");
+            modal.classList.toggle("hidden");
+        }
+
+        function saveSettings() {
+            const apiUrlInput = document.getElementById("setting-api-url").value.trim();
+            const clerkPkInput = document.getElementById("setting-clerk-pk").value.trim();
+            
+            localStorage.setItem("FG_API_URL", apiUrlInput || "http://localhost:8000");
+            localStorage.setItem("FG_CLERK_PK", clerkPkInput);
+            
+            showToast("Environment settings saved. Reloading page...", "success");
+            setTimeout(() => window.location.reload(), 1000);
+        }
+
+        // Authentication Flows
+        async function initAuth() {
+            if (CLERK_PK) {
+                isMockAuth = false;
+                document.getElementById("auth-loading").classList.remove("hidden");
+                
+                // Load Clerk SDK Script Dynamically
+                const script = document.createElement('script');
+                script.setAttribute('data-clerk-publishable-key', CLERK_PK);
+                script.src = `https://clerk.shared.lclclerk.com/npm/@clerk/clerk-js@4/dist/clerk.browser.js`;
+                script.async = true;
+                script.crossOrigin = "anonymous";
+                
+                script.onload = async () => {
+                    try {
+                        clerkInstance = new Clerk(CLERK_PK);
+                        await clerkInstance.load();
+                        
+                        document.getElementById("auth-loading").classList.add("hidden");
+                        
+                        if (clerkInstance.user) {
+                            currentUser = {
+                                name: clerkInstance.user.fullName,
+                                email: clerkInstance.user.primaryEmailAddress.emailAddress,
+                                avatar: clerkInstance.user.imageUrl
+                            };
+                            localToken = await clerkInstance.session.getToken();
+                            updateUserUI(true);
+                            fetchTransactions();
+                        } else {
+                            updateUserUI(false);
+                        }
+                    } catch (e) {
+                        console.error("Clerk load error, reverting to Mock Auth:", e);
+                        setupMockAuth();
+                    }
+                };
+                
+                script.onerror = () => {
+                    showToast("Failed to load Clerk Auth. Running in offline/mock mode.", "error");
+                    setupMockAuth();
+                };
+                
+                document.head.appendChild(script);
+            } else {
+                setupMockAuth();
+            }
+        }
+
+        function setupMockAuth() {
+            isMockAuth = true;
+            document.getElementById("auth-loading").classList.add("hidden");
+            // Auto sign-in mock user
+            currentUser = {
+                name: "Demo Developer",
+                email: "dev@financeguard.local",
+                avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=256&auto=format&fit=crop"
+            };
+            localToken = "mock-jwt-token-dev-sec-ops";
+            updateUserUI(true);
+            showToast("Loaded in mock/offline mode (Clerk bypass enabled)", "info");
+            fetchTransactions();
+        }
+
+        function updateUserUI(signedIn) {
+            const outContainer = document.getElementById("auth-signed-out");
+            const inContainer = document.getElementById("auth-signed-in");
+            
+            if (signedIn) {
+                outContainer.classList.add("hidden");
+                inContainer.classList.remove("hidden");
+                document.getElementById("user-name").innerText = currentUser.name;
+                document.getElementById("user-email").innerText = currentUser.email;
+                document.getElementById("user-avatar").src = currentUser.avatar;
+            } else {
+                outContainer.classList.remove("hidden");
+                inContainer.classList.add("hidden");
+                transactions = [];
+                renderTransactions();
+            }
+        }
+
+        function login() {
+            if (isMockAuth) {
+                setupMockAuth();
+            } else if (clerkInstance) {
+                clerkInstance.openSignIn();
+            }
+        }
+
+        function logout() {
+            if (isMockAuth) {
+                currentUser = null;
+                updateUserUI(false);
+                showToast("Logged out of session", "info");
+            } else if (clerkInstance) {
+                clerkInstance.signOut().then(() => {
+                    currentUser = null;
+                    updateUserUI(false);
+                });
+            }
+        }
+
+        // API Transactions CRUD
+        async function fetchTransactions() {
+            if (!currentUser) return;
+            
+            const warningBanner = document.getElementById("connection-warning");
+            document.getElementById("warning-endpoint").innerText = API_URL;
+
+            try {
+                const response = await fetch(`${API_URL}/api/v1/transactions`, {
+                    headers: {
+                        "Authorization": `Bearer ${localToken}`
+                    }
+                });
+                
+                if (response.ok) {
+                    transactions = await response.json();
+                    warningBanner.classList.add("hidden");
+                } else {
+                    throw new Error("HTTP error " + response.status);
+                }
+            } catch (err) {
+                console.warn("Backend connection failed. Using offline mock dataset.", err);
+                warningBanner.classList.remove("hidden");
+                transactions = offlineTransactions;
+            }
+            renderTransactions();
+        }
+
+        function renderTransactions() {
+            const tbody = document.getElementById("tx-tbody");
+            const noTxMessage = document.getElementById("no-tx-message");
+            const filter = document.getElementById("search-filter").value.toLowerCase();
+            
+            tbody.innerHTML = "";
+            
+            const filtered = transactions.filter(t => 
+                t.description.toLowerCase().includes(filter) || 
+                t.category.toLowerCase().includes(filter)
+            );
+
+            if (filtered.length === 0) {
+                noTxMessage.classList.remove("hidden");
+            } else {
+                noTxMessage.classList.add("hidden");
+            }
+
+            let balance = 0;
+            let totalIncome = 0;
+            let totalExpense = 0;
+
+            filtered.forEach(t => {
+                const isIncome = t.type === 'income' || t.amount > 0;
+                const amt = Math.abs(t.amount);
+                
+                // Update sums
+                if (isIncome) {
+                    balance += amt;
+                    totalIncome += amt;
+                } else {
+                    balance -= amt;
+                    totalExpense += amt;
+                }
+
+                const row = document.createElement("tr");
+                row.className = "hover:bg-slate-900/50 transition-colors border-b border-slate-800/30";
+                row.innerHTML = `
+                    <td class="py-4 px-4 font-mono text-slate-500">#${String(t.id).padStart(4, '0')}</td>
+                    <td class="py-4 px-4 font-medium text-slate-200">${t.description}</td>
+                    <td class="py-4 px-4"><span class="px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 text-[10px] text-slate-400 font-semibold">${t.category}</span></td>
+                    <td class="py-4 px-4">
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-semibold ${isIncome ? 'text-emerald-400 bg-emerald-950/30 border border-emerald-900/30' : 'text-rose-400 bg-rose-950/30 border border-rose-900/30'}">
+                            <span class="w-1 h-1 rounded-full ${isIncome ? 'bg-emerald-400' : 'bg-rose-400'}"></span>
+                            ${isIncome ? 'Income' : 'Expense'}
+                        </span>
+                    </td>
+                    <td class="py-4 px-4 text-right font-semibold ${isIncome ? 'text-emerald-400' : 'text-rose-400'}">
+                        ${isIncome ? '+' : '-'}$${amt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+
+            // Update stats counter with clean animation
+            document.getElementById("balance-value").innerText = (balance >= 0 ? '' : '-') + '$' + Math.abs(balance).toLocaleString('en-US', { minimumFractionDigits: 2 });
+            document.getElementById("income-value").innerText = '$' + totalIncome.toLocaleString('en-US', { minimumFractionDigits: 2 });
+            document.getElementById("expense-value").innerText = '$' + totalExpense.toLocaleString('en-US', { minimumFractionDigits: 2 });
+        }
+
+        async function handleFormSubmit(event) {
+            event.preventDefault();
+            
+            if (!currentUser) {
+                showToast("Please sign in first.", "error");
+                return;
+            }
+
+            const desc = document.getElementById("tx-desc").value.trim();
+            const amountInput = parseFloat(document.getElementById("tx-amount").value);
+            const category = document.getElementById("tx-cat").value.trim();
+            const type = document.querySelector('input[name="tx-type"]:checked').value;
+
+            // Make negative if expense
+            const amount = type === 'expense' ? -Math.abs(amountInput) : Math.abs(amountInput);
+
+            const newTx = {
+                description: desc,
+                amount: amount,
+                category: category,
+                type: type
+            };
+
+            const isOffline = !document.getElementById("connection-warning").classList.contains("hidden");
+
+            if (isOffline) {
+                // Mock push
+                const mockId = Math.floor(Math.random() * 1000) + 10;
+                offlineTransactions.unshift({ id: mockId, ...newTx });
+                transactions = offlineTransactions;
+                showToast("Transaction saved offline (Mock Backend mode)", "success");
+                renderTransactions();
+                resetForm();
+            } else {
+                try {
+                    const response = await fetch(`${API_URL}/api/v1/transactions`, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "Authorization": `Bearer ${localToken}`
+                        },
+                        body: JSON.stringify(newTx)
+                    });
+                    
+                    if (response.ok) {
+                        showToast("Transaction posted successfully to ledger", "success");
+                        resetForm();
+                        await fetchTransactions();
+                    } else {
+                        const errData = await response.json();
+                        throw new Error(errData.detail || "Failed to post transaction");
+                    }
+                } catch (err) {
+                    showToast(err.message || "Failed to connect to backend api", "error");
+                }
+            }
+        }
+
+        function resetForm() {
+            document.getElementById("tx-desc").value = "";
+            document.getElementById("tx-amount").value = "";
+            document.getElementById("tx-cat").value = "";
+        }
+
+        // Run Auth init on page load
+        window.addEventListener("DOMContentLoaded", initAuth);
+    </script>
+</body>
+</html>

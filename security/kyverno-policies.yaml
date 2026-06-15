@@ -1,0 +1,57 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: financeguard-pod-security
+  annotations:
+    policies.kyverno.io/title: Secure Pod Execution Guidelines
+    policies.kyverno.io/category: DevSecOps Capstone Standards
+    policies.kyverno.io/description: >-
+      Enforces pod level security contexts matching the enterprise requirements.
+      Requires running as non-root, dropping capabilities, and blocking privilege escalation.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-non-root-user
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "Running as root user is disallowed. Ensure runAsNonRoot is set to true in SecurityContext."
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  runAsNonRoot: true
+
+    - name: block-privilege-escalation
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "Privilege escalation is disallowed. Set allowPrivilegeEscalation to false."
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  allowPrivilegeEscalation: false
+
+    - name: drop-all-capabilities
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "All capabilities must be dropped. Specify capabilities.drop = ['ALL'] in securityContext."
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  capabilities:
+                    drop:
+                      - ALL

@@ -1,0 +1,37 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: financeguard-alert-rules
+  labels:
+    role: alert-rules
+    app: financeguard
+spec:
+  groups:
+    - name: financeguard-api.rules
+      rules:
+        - alert: HighApiLatency
+          expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{app="financeguard-backend"}[5m])) by (le)) > 0.500
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High API Response Latency detected on {{ $labels.instance }}"
+            description: "95th percentile response latency for backend service is over 500ms: current value is {{ $value }}s."
+
+        - alert: HighErrorRate
+          expr: sum(rate(http_requests_total{status=~"5..",app="financeguard-backend"}[2m])) / sum(rate(http_requests_total{app="financeguard-backend"}[2m])) * 100 > 5
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Elevated HTTP 5xx error rate detected on {{ $labels.instance }}"
+            description: "HTTP 5xx responses constitute over 5% of traffic: current value is {{ $value }}%."
+
+        - alert: KubePodCrashLooping
+          expr: rate(kube_pod_container_status_restarts_total{namespace=~"financeguard-.*"}[5m]) * 60 > 2
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pod container crash loop detected"
+            description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has restarted more than twice within the last 5 minutes."

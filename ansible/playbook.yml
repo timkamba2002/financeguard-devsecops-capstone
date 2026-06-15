@@ -1,0 +1,53 @@
+---
+- name: Bootstrap FinanceGuard Bastion / Management Node
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+  vars:
+    kubectl_version: "v1.28.2"
+    helm_version: "v3.12.3"
+
+  tasks:
+    - name: Update apt package cache
+      apt:
+        update_cache: yes
+      become: yes
+
+    - name: Install essential packages
+      apt:
+        name:
+          - curl
+          - git
+          - unzip
+          - jq
+          - python3-pip
+        state: present
+      become: yes
+
+    - name: Download kubectl binary
+      get_url:
+        url: "https://dl.k8s.io/release/{{ kubectl_version }}/bin/linux/amd64/kubectl"
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+      become: yes
+
+    - name: Download Helm install script
+      get_url:
+        url: "https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
+        dest: /tmp/get_helm.sh
+        mode: '0700'
+
+    - name: Execute Helm installation script
+      command: /tmp/get_helm.sh
+      become: yes
+      args:
+        creates: /usr/local/bin/helm
+
+    - name: Install AWS CLI via pip
+      pip:
+        name: awscli
+        state: present
+
+    - name: Print boot completion summary
+      debug:
+        msg: "Management workspace bootstrapped successfully. kubectl, helm, jq, awscli installed."

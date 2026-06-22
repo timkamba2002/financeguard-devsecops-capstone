@@ -12,7 +12,8 @@ spec:
     helm:
       values: |
         image:
-          repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/financeguard-backend
+          repository: 866934333672.dkr.ecr.us-east-1.amazonaws.com/financeguard-backend   # ← Correct ID here
+          tag: "latest"
   destination:
     server: https://kubernetes.default.svc
     namespace: dev

@@ -1,23 +1,16 @@
 # RDS Database Subnet Group
 resource "aws_db_subnet_group" "main" {
-  name        = "financeguard-db-subnet-group-${var.environment}"
-  description = "Database subnet group for FinanceGuard PostgreSQL"
-  subnet_ids  = aws_subnet.database[*].id
-
-  tags = {
-    Name = "financeguard-db-subnet-group-${var.environment}"
-  }
+  name       = "financeguard-db-subnet-group-${var.environment}"
+  subnet_ids = aws_subnet.database[*].id
 }
 
-# RDS Security Group
+# RDS Security Group - Allow access from EKS Fargate
 resource "aws_security_group" "db" {
   name        = "financeguard-db-sg-${var.environment}"
-  description = "Access to RDS from EKS worker nodes only"
+  description = "Allow EKS Fargate to connect to RDS"
   vpc_id      = aws_vpc.main.id
 
-  # Ingress rule allowing traffic from EKS node security group or private subnet blocks
   ingress {
-    description = "Allow PostgreSQL access from EKS private subnets"
     from_port   = 5432
     to_port     = 5432
     protocol    = "tcp"
@@ -36,24 +29,36 @@ resource "aws_security_group" "db" {
   }
 }
 
+# Secret in AWS Secrets Manager
+resource "aws_secretsmanager_secret" "db_credentials" {
+  name        = var.secret_name
+  description = "FinanceGuard RDS Database Credentials"
+}
+
+resource "aws_secretsmanager_secret_version" "db_credentials_version" {
+  secret_id = aws_secretsmanager_secret.db_credentials.id
+  secret_string = jsonencode({
+    username = var.db_user
+    password = "ChangeMeToAStrongPassword123!"   # Change this in console later
+  })
+}
+
 # RDS PostgreSQL Instance
 resource "aws_db_instance" "main" {
   identifier             = "financeguard-db-${var.environment}"
   allocated_storage      = 20
-  max_allocated_storage  = 100
+  engine                 = var.db_engine
+  engine_version         = var.db_version
+  instance_class         = var.db_engine == "mysql" ? "db.t3.micro" : "db.t3.micro"
   db_name                = var.db_name
-  engine                 = "postgres"
-  engine_version         = "15.7"
-  instance_class         = "db.t3.micro"
   username               = var.db_user
-  password               = var.db_password
+  password               = jsondecode(aws_secretsmanager_secret_version.db_credentials_version.secret_string)["password"]
   db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.db.id]
   skip_final_snapshot    = true
-  multi_az               = var.environment == "prod" ? true : false
   storage_encrypted      = true
 
   tags = {
-    Name = "financeguard-rds-postgres-${var.environment}"
+    Name = "financeguard-rds-${var.environment}"
   }
 }

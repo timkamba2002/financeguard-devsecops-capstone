@@ -1,6 +1,5 @@
 apiVersion: v2
 name: frontend
-description: A Helm chart for the FinanceGuard Nginx frontend service
-type: application
-version: 1.0.0
+description: FinanceGuard Frontend
+version: 0.1.0
 appVersion: "1.0.0"

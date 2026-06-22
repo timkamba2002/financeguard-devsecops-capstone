@@ -1,48 +1,50 @@
 variable "aws_region" {
-  type        = string
-  description = "AWS region to deploy resources"
-  default     = "us-east-1"
+  type    = string
+  default = "us-east-1"
 }
 
 variable "environment" {
-  type        = string
-  description = "Target environment name (dev, staging, prod)"
-  default     = "dev"
+  type    = string
+  default = "dev"
 }
 
 variable "vpc_cidr" {
-  type        = string
-  description = "CIDR block for the VPC"
-  default     = "10.0.0.0/16"
+  type    = string
+  default = "10.0.0.0/16"
 }
 
 variable "availability_zones" {
-  type        = list(string)
-  description = "List of availability zones for the subnets"
-  default     = ["us-east-1a", "us-east-1b"]
+  type    = list(string)
+  default = ["us-east-1a", "us-east-1b"]
 }
 
 variable "eks_cluster_name" {
-  type        = string
-  description = "Name of the EKS cluster"
-  default     = "financeguard-eks"
+  type    = string
+  default = "financeguard-eks"
 }
 
 variable "db_name" {
-  type        = string
-  description = "PostgreSQL database name"
-  default     = "financeguard"
+  type    = string
+  default = "financeguard"
 }
 
 variable "db_user" {
-  type        = string
-  description = "Database administrator username"
-  default     = "dbadmin"
+  type    = string
+  default = "dbadmin"
 }
 
-variable "db_password" {
+variable "secret_name" {
+  type    = string
+  default = "financeguard/db/credentials"
+}
+
+variable "db_engine" {
   type        = string
-  description = "Database administrator password (use Secret Manager in production)"
-  default     = "SuperSecretSecurePassword123!"
-  sensitive   = true
+  default     = "postgres"   # Change to "mysql" for your other project
+  description = "Database engine: postgres or mysql"
+}
+
+variable "db_version" {
+  type        = string
+  default     = "16.14"       # For postgres. For mysql use "8.0"
 }

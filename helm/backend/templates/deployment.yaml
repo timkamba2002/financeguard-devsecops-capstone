@@ -14,41 +14,21 @@ spec:
       labels:
         app: financeguard-backend
     spec:
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 10001
-        fsGroup: 10001
       containers:
         - name: backend
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 8000
-              name: http
           env:
             - name: ENVIRONMENT
-              value: "{{ .Values.env.ENVIRONMENT }}"
-            - name: CLERK_JWKS_URL
-              value: "{{ .Values.env.CLERK_JWKS_URL }}"
+              value: {{ .Values.env.ENVIRONMENT | quote }}
             - name: SKIP_AUTH_VERIFICATION
-              value: "{{ .Values.env.SKIP_AUTH_VERIFICATION }}"
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 8000
-            initialDelaySeconds: 15
-            periodSeconds: 10
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 8000
-            initialDelaySeconds: 10
-            periodSeconds: 5
+              value: {{ .Values.env.SKIP_AUTH_VERIFICATION | quote }}
           resources:
-            {{- toYaml .Values.resources | nindent 12 }}
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
-            capabilities:
-              drop:
-                - ALL
+            limits:
+              cpu: {{ .Values.resources.limits.cpu }}
+              memory: {{ .Values.resources.limits.memory }}
+            requests:
+              cpu: {{ .Values.resources.requests.cpu }}
+              memory: {{ .Values.resources.requests.memory }}

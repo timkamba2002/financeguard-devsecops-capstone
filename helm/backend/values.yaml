@@ -11,8 +11,8 @@ service:
 
 env:
   ENVIRONMENT: "dev"
-  CLERK_JWKS_URL: "https://api.clerk.com/v1"
   SKIP_AUTH_VERIFICATION: "true"
+  # CLERK_JWKS_URL will be injected from Secrets
 
 resources:
   limits:
@@ -28,6 +28,4 @@ autoscaling:
   maxReplicas: 5
   targetCPUUtilizationPercentage: 80
 
-nodeSelector: {}
-tolerations: []
-affinity: {}
+# Database will be connected via environment variables from Secrets

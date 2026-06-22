@@ -1,10 +1,18 @@
 replicaCount: 2
 
 image:
-  repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/financeguard-frontend
+  repository: 866934333672.dkr.ecr.us-east-1.amazonaws.com/financeguard-frontend
   pullPolicy: IfNotPresent
   tag: "latest"
 
 service:
   type: ClusterIP
   port: 80
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi

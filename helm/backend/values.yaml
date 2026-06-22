@@ -1,7 +1,7 @@
 replicaCount: 2
 
 image:
-  repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/financeguard-backend
+  repository: 866934333672.dkr.ecr.us-east-1.amazonaws.com/financeguard-backend
   pullPolicy: IfNotPresent
   tag: "latest"
 
@@ -12,7 +12,6 @@ service:
 env:
   ENVIRONMENT: "dev"
   SKIP_AUTH_VERIFICATION: "true"
-  # CLERK_JWKS_URL will be injected from Secrets
 
 resources:
   limits:
@@ -27,5 +26,3 @@ autoscaling:
   minReplicas: 2
   maxReplicas: 5
   targetCPUUtilizationPercentage: 80
-
-# Database will be connected via environment variables from Secrets

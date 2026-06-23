@@ -99,7 +99,8 @@
 
     <script>
         // ==================== CONFIG ====================
-        let API_URL = localStorage.getItem("FG_API_URL") || "http://localhost:8000";
+       let API_URL = localStorage.getItem("FG_API_URL") || 
+              "http://k8s-dev-financeg-4fddf1bc8c-49026185.us-east-1.elb.amazonaws.com";
         let transactions = [];
 
         function showToast(msg) {

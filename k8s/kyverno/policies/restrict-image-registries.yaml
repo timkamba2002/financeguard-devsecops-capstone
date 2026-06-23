@@ -1,0 +1,44 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-image-registries
+  annotations:
+    policies.kyverno.io/title: Restrict Image Registries
+    policies.kyverno.io/category: Supply Chain
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Only images from the approved ECR registry are permitted.
+      This prevents pulling from public registries that have not been
+      scanned by Trivy and verified through the CI pipeline.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: allow-only-ecr-images
+      match:
+        any:
+          - resources:
+              kinds: [ Pod ]
+              namespaces: [ prod ]    # enforce strictly on prod; audit on dev/staging first
+      validate:
+        message: >-
+          Images must be pulled from the approved ECR registry
+          (866934333672.dkr.ecr.us-east-1.amazonaws.com).
+          Untrusted public images are not permitted in production.
+        pattern:
+          spec:
+            containers:
+              - image: "866934333672.dkr.ecr.us-east-1.amazonaws.com/*"
+
+    - name: allow-only-ecr-images-staging
+      match:
+        any:
+          - resources:
+              kinds: [ Pod ]
+              namespaces: [ staging ]
+      validate:
+        message: "Staging: images must come from ECR."
+        pattern:
+          spec:
+            containers:
+              - image: "866934333672.dkr.ecr.us-east-1.amazonaws.com/*"

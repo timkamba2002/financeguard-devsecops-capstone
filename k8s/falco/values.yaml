@@ -1,0 +1,88 @@
+# Falco Helm values — runtime threat detection
+# Install: helm repo add falcosecurity https://falcosecurity.github.io/charts
+#          helm install falco falcosecurity/falco -n falco --create-namespace -f k8s/falco/values.yaml
+
+falco:
+  grpc:
+    enabled: true
+  grpcOutput:
+    enabled: true
+
+  # Rules that matter most for a FinanceGuard-style API
+  rules_file:
+    - /etc/falco/falco_rules.yaml
+    - /etc/falco/falco_rules.local.yaml
+    - /etc/falco/k8s_audit_rules.yaml
+
+  customRules:
+    financeguard_rules.yaml: |-
+      # Alert if a shell is spawned inside the backend container (almost never legitimate)
+      - rule: Shell spawned in backend container
+        desc: A shell was spawned inside the financeguard-backend container
+        condition: >
+          spawned_process and
+          container and
+          container.image.repository contains "financeguard-backend" and
+          proc.name in (shell_binaries)
+        output: >
+          Shell spawned in backend container
+          (user=%user.name container=%container.name image=%container.image.repository
+           cmd=%proc.cmdline)
+        priority: CRITICAL
+        tags: [financeguard, shell, runtime]
+
+      # Alert on unexpected outbound connections from backend
+      - rule: Unexpected outbound connection from backend
+        desc: Backend initiated a connection to an unexpected external IP
+        condition: >
+          outbound and
+          container and
+          container.image.repository contains "financeguard-backend" and
+          not fd.sip in (rds_allowed_ips)
+        output: >
+          Unexpected outbound connection (container=%container.name
+           ip=%fd.sip port=%fd.sport)
+        priority: WARNING
+        tags: [financeguard, network, runtime]
+
+      # Alert on sensitive file reads inside containers
+      - rule: Sensitive file read in container
+        desc: A container read a sensitive file (passwd, shadow, etc.)
+        condition: >
+          open_read and
+          container and
+          fd.name in (sensitive_files) and
+          container.image.repository contains "financeguard"
+        output: >
+          Sensitive file opened for reading
+          (file=%fd.name container=%container.name image=%container.image.repository)
+        priority: WARNING
+        tags: [financeguard, filesystem, runtime]
+
+  # Send alerts to stdout (captured by CloudWatch/Fluentd) + Slack via falcosidekick
+  jsonOutput: true
+  jsonIncludeOutputProperty: true
+
+falcosidekick:
+  enabled: true
+  config:
+    slack:
+      webhookurl: ""    # set via: helm upgrade falco ... --set falcosidekick.config.slack.webhookurl=$SLACK_WEBHOOK
+      minimumpriority: "warning"
+    aws:
+      cloudwatchlogs:
+        loggroup:  "/financeguard/falco"
+        logstream: "runtime-alerts"
+        region:    "us-east-1"
+        minimumpriority: "notice"
+
+driver:
+  kind: ebpf    # eBPF driver — no kernel module required; works on EKS Fargate-compatible nodes
+
+resources:
+  requests:
+    cpu:    100m
+    memory: 256Mi
+  limits:
+    cpu:    500m
+    memory: 512Mi

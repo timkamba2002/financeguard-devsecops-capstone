@@ -1,0 +1,33 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-readonly-rootfs
+  annotations:
+    policies.kyverno.io/title: Require Read-Only Root Filesystem
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      Containers should mount their root filesystem read-only.
+      This prevents attackers from writing malware or modifying binaries
+      if they gain code execution inside a container.
+      Set to Audit first — some apps write to /tmp. Fix by adding
+      an emptyDir volume for /tmp before switching to Enforce.
+spec:
+  validationFailureAction: Audit      # start in Audit (warn only), switch to Enforce after fixing /tmp mounts
+  background: true
+  rules:
+    - name: check-readonly-rootfs
+      match:
+        any:
+          - resources:
+              kinds: [ Pod ]
+              namespaces: [ staging, prod ]   # only staging+prod for now; dev is excluded
+      validate:
+        message: >-
+          Containers should set securityContext.readOnlyRootFilesystem: true.
+          If the app writes to /tmp, add an emptyDir volume and mount it at /tmp.
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  readOnlyRootFilesystem: true

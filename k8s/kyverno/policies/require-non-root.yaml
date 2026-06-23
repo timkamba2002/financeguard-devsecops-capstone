@@ -1,0 +1,47 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-non-root-containers
+  annotations:
+    policies.kyverno.io/title: Require Non-Root Containers
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Containers must not run as root. Enforces runAsNonRoot: true
+      and forbids runAsUser: 0. This blocks privilege escalation
+      and limits blast radius if a container is compromised.
+spec:
+  validationFailureAction: Enforce    # blocks the deploy — change to Audit to warn only
+  background: true
+  rules:
+    - name: check-containers-non-root
+      match:
+        any:
+          - resources:
+              kinds: [ Pod ]
+              namespaces: [ dev, staging, prod ]
+      validate:
+        message: >-
+          Containers must set runAsNonRoot: true and must not set
+          runAsUser: 0. Update your Helm chart's securityContext.
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  runAsNonRoot: true
+                  =(runAsUser): ">0"
+
+    - name: check-init-containers-non-root
+      match:
+        any:
+          - resources:
+              kinds: [ Pod ]
+              namespaces: [ dev, staging, prod ]
+      validate:
+        message: "Init containers must also run as non-root."
+        pattern:
+          spec:
+            =(initContainers):
+              - securityContext:
+                  runAsNonRoot: true
+                  =(runAsUser): ">0"

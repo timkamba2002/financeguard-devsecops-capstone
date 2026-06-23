@@ -50,6 +50,9 @@ resource "aws_eks_fargate_profile" "main" {
   selector {
     namespace = "prod"
   }
+  selector {
+    namespace = "argocd"
+  }
 }
 
 # Fargate Pod Execution Role + ECR Permissions
@@ -90,8 +93,8 @@ resource "aws_eks_node_group" "system" {
   subnet_ids      = aws_subnet.private[*].id
 
   scaling_config {
-    desired_size = 1
-    max_size     = 2
+    desired_size = 2
+    max_size     = 3
     min_size     = 1
   }
 

@@ -9,6 +9,10 @@ service:
   type: ClusterIP
   port: 80
 
+# New: Configurable API URL for frontend
+env:
+  VITE_API_BASE_URL: "http://financeguard-backend-dev-backend.dev.svc.cluster.local:8000"
+
 resources:
   limits:
     cpu: 200m

@@ -1,0 +1,9 @@
+﻿{
+  "spec": {
+    "source": {
+      "helm": {
+        "values": "image:\n  repository: 866934333672.dkr.ecr.us-east-1.amazonaws.com/financeguard-backend\n  tag: \"latest\"\n"
+      }
+    }
+  }
+}

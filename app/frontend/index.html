@@ -43,7 +43,7 @@
                     <i class="fa-solid fa-plus text-indigo-400"></i> New Transaction
                 </h2>
                 
-                <form id="tx-form" onsubmit="handleFormSubmit(event)">
+                <form id="tx-form">
                     <div class="space-y-4">
                         <div>
                             <label class="text-xs text-slate-400">Description</label>
@@ -100,10 +100,9 @@
     <script>
         // ==================== CONFIG ====================
         let API_URL = "http://localhost:8000";
-
         let transactions = [];
 
-        function showToast(msg, type = "info") {
+        function showToast(msg) {
             console.log("[TOAST]", msg);
             const toast = document.createElement("div");
             toast.style.cssText = "position:fixed;bottom:20px;right:20px;background:#1e2937;color:white;padding:12px 20px;border-radius:8px;z-index:9999";
@@ -112,9 +111,10 @@
             setTimeout(() => toast.remove(), 3000);
         }
 
-        // ==================== MAIN DEBUG FUNCTION ====================
-        async function handleFormSubmit(event) {
+        // ==================== FORM SUBMIT WITH DEBUG ====================
+        document.getElementById("tx-form").addEventListener("submit", async function(event) {
             event.preventDefault();
+            
             console.log("%c[DEBUG] Form submitted!", "color: lime; font-weight: bold");
 
             const desc = document.getElementById("tx-desc").value.trim();
@@ -126,7 +126,8 @@
             console.log("[DEBUG] Data:", { desc, amount, category, type, API_URL });
 
             try {
-                console.log("[DEBUG] Sending POST...");
+                console.log("[DEBUG] Sending POST request...");
+                
                 const res = await fetch(`${API_URL}/api/v1/transactions`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -136,20 +137,20 @@
                 console.log("[DEBUG] Response status:", res.status);
 
                 if (res.ok) {
-                    console.log("%c[DEBUG] SUCCESS!", "color: lime");
+                    console.log("%c[DEBUG] SUCCESS - Transaction saved!", "color: lime");
                     showToast("Transaction saved!");
                     document.getElementById("tx-form").reset();
                     await fetchTransactions();
                 } else {
                     const err = await res.json().catch(() => ({}));
-                    console.error("[DEBUG] Error response:", err);
+                    console.error("[DEBUG] Backend error:", err);
                     showToast("Failed: " + (err.detail || res.status));
                 }
             } catch (err) {
                 console.error("[DEBUG] Network error:", err);
                 showToast("Cannot reach backend");
             }
-        }
+        });
 
         async function fetchTransactions() {
             try {
@@ -194,7 +195,7 @@
 
         // Init
         window.onload = function() {
-            console.log("%c[FinanceGuard] Loaded. API_URL =", "color: cyan", API_URL);
+            console.log("%c[FinanceGuard] Page loaded successfully. API_URL =", "color: cyan", API_URL);
             fetchTransactions();
         };
     </script>

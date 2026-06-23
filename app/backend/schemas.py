@@ -1,13 +1,16 @@
 from pydantic import BaseModel, Field
 
+
 class TransactionBase(BaseModel):
     description: str = Field(..., example="AWS Invoice June 2026")
     amount: float = Field(..., example=1240.50)
     category: str = Field(..., example="Cloud Infrastructure")
     type: str = Field(..., example="expense")  # expense or income
 
+
 class TransactionCreate(TransactionBase):
     pass
+
 
 class Transaction(TransactionBase):
     id: int
@@ -22,6 +25,6 @@ class Transaction(TransactionBase):
                 "description": "AWS Invoice June 2026",
                 "amount": -1240.50,
                 "category": "Cloud Infrastructure",
-                "type": "expense"
+                "type": "expense",
             }
         }

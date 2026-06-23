@@ -17,7 +17,7 @@ terraform {
     key          = "terraform.tfstate"
     region       = "us-east-1"
     encrypt      = true
-    use_lockfile = true   # Modern S3 locking (no DynamoDB needed)
+    # use_lockfile = true  # Requires Terraform >= 1.10 — use DynamoDB for locking on older versions
   }
 }
 

@@ -26,6 +26,7 @@ else:
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+
 class TransactionModel(Base):
     __tablename__ = "transactions"
 
@@ -37,6 +38,7 @@ class TransactionModel(Base):
     type = Column(String)  # "income" or "expense"
     created_at = Column(DateTime, default=datetime.utcnow)
 
+
 def get_db():
     db = SessionLocal()
     try:
@@ -44,11 +46,12 @@ def get_db():
     finally:
         db.close()
 
+
 # ==================== FASTAPI APP ====================
 app = FastAPI(
     title="FinanceGuard API",
     description="Secure backend for Enterprise DevSecOps Capstone Project",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 app.add_middleware(
@@ -62,11 +65,13 @@ app.add_middleware(
 security = HTTPBearer()
 SKIP_AUTH_VERIFICATION = os.getenv("SKIP_AUTH_VERIFICATION", "true").lower() == "true"
 
+
 class TransactionCreate(BaseModel):
     description: str
     amount: float
     category: str
     type: str
+
 
 class Transaction(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -77,32 +82,49 @@ class Transaction(BaseModel):
     category: str
     type: str
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> dict:
     if SKIP_AUTH_VERIFICATION:
         return {"user_id": "demo-user-123"}
     raise HTTPException(status_code=501, detail="Full auth not implemented")
+
 
 @app.on_event("startup")
 async def startup_event():
     Base.metadata.create_all(bind=engine)
     print("Database tables initialized.")
 
+
 @app.get("/health")
 def health_check():
     return {"status": "healthy", "message": "Connected to RDS PostgreSQL"}
 
+
 @app.get("/api/v1/transactions", response_model=List[Transaction])
-def list_transactions(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return db.query(TransactionModel).filter(TransactionModel.user_id == current_user["user_id"]).all()
+def list_transactions(
+    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)
+):
+    return (
+        db.query(TransactionModel)
+        .filter(TransactionModel.user_id == current_user["user_id"])
+        .all()
+    )
+
 
 @app.post("/api/v1/transactions", response_model=Transaction, status_code=201)
-def create_transaction(transaction: TransactionCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def create_transaction(
+    transaction: TransactionCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     db_tx = TransactionModel(
         user_id=current_user["user_id"],
         description=transaction.description,
         amount=transaction.amount,
         category=transaction.category,
-        type=transaction.type
+        type=transaction.type,
     )
     db.add(db_tx)
     db.commit()

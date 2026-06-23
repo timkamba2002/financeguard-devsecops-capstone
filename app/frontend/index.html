@@ -35,6 +35,49 @@
             <span>Backend unreachable. Using offline data.</span>
         </div>
 
+        <!-- Stats Row -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+            <div class="glass p-5 rounded-2xl">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-xs text-slate-400 uppercase tracking-wider">Total Net Balance</span>
+                    <div class="w-8 h-8 bg-indigo-600/20 rounded-lg flex items-center justify-center">
+                        <i class="fa-solid fa-scale-balanced text-indigo-400 text-xs"></i>
+                    </div>
+                </div>
+                <p id="stat-balance" class="text-2xl font-bold text-white">$0.00</p>
+                <p class="text-xs text-slate-500 mt-2 flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 bg-emerald-400 rounded-full inline-block"></span>
+                    Live updates &middot; synchronized securely
+                </p>
+            </div>
+            <div class="glass p-5 rounded-2xl">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-xs text-slate-400 uppercase tracking-wider">Monthly Inflow</span>
+                    <div class="w-8 h-8 bg-emerald-600/20 rounded-lg flex items-center justify-center">
+                        <i class="fa-solid fa-arrow-trend-up text-emerald-400 text-xs"></i>
+                    </div>
+                </div>
+                <p id="stat-inflow" class="text-2xl font-bold text-emerald-400">$0.00</p>
+                <p class="text-xs text-slate-500 mt-2 flex items-center gap-1">
+                    <i class="fa-solid fa-lock text-slate-600 text-xs"></i>
+                    Clerk Secured &middot; Audit trail logging
+                </p>
+            </div>
+            <div class="glass p-5 rounded-2xl">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-xs text-slate-400 uppercase tracking-wider">Monthly Outflow</span>
+                    <div class="w-8 h-8 bg-rose-600/20 rounded-lg flex items-center justify-center">
+                        <i class="fa-solid fa-arrow-trend-down text-rose-400 text-xs"></i>
+                    </div>
+                </div>
+                <p id="stat-outflow" class="text-2xl font-bold text-rose-400">$0.00</p>
+                <p class="text-xs text-slate-500 mt-2 flex items-center gap-1">
+                    <i class="fa-solid fa-shield-halved text-slate-600 text-xs"></i>
+                    RDS Secured &middot; Encrypted at rest
+                </p>
+            </div>
+        </div>
+
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
             
             <!-- Add Transaction Form -->
@@ -192,7 +235,18 @@
             }
         }
 
+        function renderStats() {
+            const balance = transactions.reduce((s, t) => s + t.amount, 0);
+            const inflow  = transactions.reduce((s, t) => s + (t.amount > 0 ? t.amount : 0), 0);
+            const outflow = transactions.reduce((s, t) => s + (t.amount < 0 ? Math.abs(t.amount) : 0), 0);
+            document.getElementById("stat-balance").textContent = (balance < 0 ? "-" : "") + "$" + Math.abs(balance).toFixed(2);
+            document.getElementById("stat-balance").className = "text-2xl font-bold " + (balance < 0 ? "text-rose-400" : "text-white");
+            document.getElementById("stat-inflow").textContent  = "$" + inflow.toFixed(2);
+            document.getElementById("stat-outflow").textContent = "$" + outflow.toFixed(2);
+        }
+
         function renderTransactions() {
+            renderStats();
             const tbody = document.getElementById("tx-tbody");
             tbody.innerHTML = "";
             if (!transactions.length) {

@@ -1,4 +1,5 @@
-replicaCount: 2
+# Base defaults — overridden by values-<env>.yaml per environment
+replicaCount: 1
 
 image:
   repository: 866934333672.dkr.ecr.us-east-1.amazonaws.com/financeguard-frontend
@@ -9,10 +10,6 @@ service:
   type: ClusterIP
   port: 80
 
-# New: Configurable API URL for frontend
-env:
-  VITE_API_BASE_URL: "http://financeguard-backend-dev-backend.dev.svc.cluster.local:8000"
-
 resources:
   limits:
     cpu: 200m
@@ -20,3 +17,9 @@ resources:
   requests:
     cpu: 100m
     memory: 128Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80

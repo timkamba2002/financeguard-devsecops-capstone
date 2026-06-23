@@ -1,14 +1,13 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: financeguard-staging
+namespace: staging
 
 configMapGenerator:
   - name: backend-config
     literals:
       - ENVIRONMENT=staging
       - SKIP_AUTH_VERIFICATION=false
-      - CLERK_JWKS_URL=https://api.clerk.com/v1
 
 patches:
   - target:
@@ -18,10 +17,6 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 2
-      - op: replace
-        path: /spec/template/spec/containers/0/image
-        value: 123456789012.dkr.ecr.us-east-1.amazonaws.com/financeguard-backend:staging-latest
-
   - target:
       kind: Deployment
       name: .*frontend
@@ -29,6 +24,3 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 2
-      - op: replace
-        path: /spec/template/spec/containers/0/image
-        value: 123456789012.dkr.ecr.us-east-1.amazonaws.com/financeguard-frontend:staging-latest

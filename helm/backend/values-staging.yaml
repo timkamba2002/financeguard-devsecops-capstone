@@ -1,0 +1,11 @@
+replicaCount: 2
+
+env:
+  ENVIRONMENT: "staging"
+  SKIP_AUTH_VERIFICATION: "false"
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 75

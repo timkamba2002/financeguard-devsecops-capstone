@@ -1,14 +1,13 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: financeguard-prod
+namespace: prod
 
 configMapGenerator:
   - name: backend-config
     literals:
       - ENVIRONMENT=production
       - SKIP_AUTH_VERIFICATION=false
-      - CLERK_JWKS_URL=https://api.clerk.com/v1
 
 patches:
   - target:
@@ -18,10 +17,6 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 3
-      - op: replace
-        path: /spec/template/spec/containers/0/image
-        value: 123456789012.dkr.ecr.us-east-1.amazonaws.com/financeguard-backend:v1.0.0
-
   - target:
       kind: Deployment
       name: .*frontend
@@ -29,6 +24,3 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 3
-      - op: replace
-        path: /spec/template/spec/containers/0/image
-        value: 123456789012.dkr.ecr.us-east-1.amazonaws.com/financeguard-frontend:v1.0.0

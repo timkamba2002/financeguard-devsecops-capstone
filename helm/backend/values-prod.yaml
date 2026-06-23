@@ -1,0 +1,22 @@
+replicaCount: 3
+
+image:
+  pullPolicy: Always
+
+env:
+  ENVIRONMENT: "production"
+  SKIP_AUTH_VERIFICATION: "false"
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70

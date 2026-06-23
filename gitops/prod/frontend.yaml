@@ -1,22 +1,22 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: financeguard-backend-dev
+  name: financeguard-frontend-prod
   namespace: argocd
 spec:
   project: default
   source:
     repoURL: https://github.com/timkamba2002/financeguard-devsecops-capstone.git
-    targetRevision: main
-    path: helm/backend
+    targetRevision: production
+    path: helm/frontend
     helm:
       valueFiles:
         - values.yaml
-        - values-dev.yaml
+        - values-prod.yaml
   destination:
     server: https://kubernetes.default.svc
-    namespace: dev
+    namespace: prod
   syncPolicy:
     automated:
-      prune: true
+      prune: false
       selfHeal: true

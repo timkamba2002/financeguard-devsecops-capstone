@@ -2,14 +2,21 @@ name: FinanceGuard DevSecOps CI/CD
 
 on:
   push:
-    branches: [ main, staging, development ]
+    branches: [ main, staging, production ]
   pull_request:
-    branches: [ main, staging, development ]
+    branches: [ main, staging, production ]
 
 env:
   AWS_REGION:   us-east-1
   ECR_REGISTRY: 866934333672.dkr.ecr.us-east-1.amazonaws.com
   EKS_CLUSTER:  financeguard-eks-dev
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Branch → environment mapping
+#   main        →  dev        (fast iteration, auth verification skipped)
+#   staging     →  staging    (pre-prod, auth verification enabled)
+#   production  →  prod       (full resources, no auto-prune in ArgoCD)
+# ─────────────────────────────────────────────────────────────────────────────
 
 jobs:
 
@@ -106,16 +113,15 @@ jobs:
           framework: terraform
           soft_fail: true
 
-  # ─── 4. Push to ECR + GitOps tag bump + ArgoCD sync ───────────────────────
-  #        Only runs on direct push to main (not on PRs)
-  deploy:
-    name: Push to ECR & Deploy via ArgoCD
+  # ─── 4a. Deploy → dev  (main branch only) ─────────────────────────────────
+  deploy-dev:
+    name: Deploy to Dev
     runs-on: ubuntu-latest
     needs: [ docker-scan, terraform-check ]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: dev
     permissions:
-      contents: write   # needed to commit the image-tag bump back to git
-
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -131,15 +137,11 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Build once, tag with both git SHA (immutable) and latest
       - name: Build & push backend image
         env:
           IMAGE: ${{ env.ECR_REGISTRY }}/financeguard-backend
         run: |
-          docker build \
-            -t $IMAGE:${{ github.sha }} \
-            -t $IMAGE:latest \
-            ./app/backend
+          docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest ./app/backend
           docker push $IMAGE:${{ github.sha }}
           docker push $IMAGE:latest
 
@@ -147,45 +149,176 @@ jobs:
         env:
           IMAGE: ${{ env.ECR_REGISTRY }}/financeguard-frontend
         run: |
-          docker build \
-            -t $IMAGE:${{ github.sha }} \
-            -t $IMAGE:latest \
-            ./app/frontend
+          docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest ./app/frontend
           docker push $IMAGE:${{ github.sha }}
           docker push $IMAGE:latest
 
-      # Update the Helm values files so ArgoCD deploys the exact SHA that passed CI
-      - name: Bump image tags in Helm values
+      - name: Bump image tags in dev Helm values
         run: |
-          sed -i "s/^  tag:.*/  tag: \"${{ github.sha }}\"/" helm/backend/values.yaml
-          sed -i "s/^  tag:.*/  tag: \"${{ github.sha }}\"/" helm/frontend/values.yaml
+          sed -i "s/^  tag:.*/  tag: \"${{ github.sha }}\"/" helm/backend/values-dev.yaml
+          sed -i "s/^  tag:.*/  tag: \"${{ github.sha }}\"/" helm/frontend/values-dev.yaml
 
       - name: Commit & push tag bump
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add helm/backend/values.yaml helm/frontend/values.yaml
+          git add helm/backend/values-dev.yaml helm/frontend/values-dev.yaml
           git diff --staged --quiet || \
-            git commit -m "ci: bump image tags to ${{ github.sha }} [skip ci]"
+            git commit -m "ci(dev): bump image tags to ${{ github.sha }} [skip ci]"
           git push
 
-      # Connect to EKS and trigger an immediate ArgoCD hard-refresh
-      # (without this ArgoCD would pick up the git change within ~3 min on its own)
       - name: Update kubeconfig
-        run: |
-          aws eks update-kubeconfig \
-            --region ${{ env.AWS_REGION }} \
-            --name   ${{ env.EKS_CLUSTER }}
+        run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
 
-      - name: Trigger ArgoCD hard refresh
+      - name: Trigger ArgoCD hard refresh (dev)
         run: |
           kubectl annotate app financeguard-backend-dev \
             argocd.argoproj.io/refresh=hard -n argocd --overwrite
           kubectl annotate app financeguard-frontend-dev \
             argocd.argoproj.io/refresh=hard -n argocd --overwrite
 
-      - name: Wait for rollout
+      - name: Wait for dev rollout
         run: |
           sleep 30
           kubectl rollout status deployment/financeguard-backend-dev-backend  -n dev --timeout=180s
           kubectl rollout status deployment/financeguard-frontend-dev-frontend -n dev --timeout=180s
+
+  # ─── 4b. Deploy → staging  (staging branch only) ──────────────────────────
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [ docker-scan, terraform-check ]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    environment: staging
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push backend image
+        env:
+          IMAGE: ${{ env.ECR_REGISTRY }}/financeguard-backend
+        run: |
+          docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:staging-latest ./app/backend
+          docker push $IMAGE:${{ github.sha }}
+          docker push $IMAGE:staging-latest
+
+      - name: Build & push frontend image
+        env:
+          IMAGE: ${{ env.ECR_REGISTRY }}/financeguard-frontend
+        run: |
+          docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:staging-latest ./app/frontend
+          docker push $IMAGE:${{ github.sha }}
+          docker push $IMAGE:staging-latest
+
+      - name: Bump image tags in staging Helm values
+        run: |
+          sed -i "s/^  tag:.*/  tag: \"${{ github.sha }}\"/" helm/backend/values-staging.yaml
+          sed -i "s/^  tag:.*/  tag: \"${{ github.sha }}\"/" helm/frontend/values-staging.yaml
+
+      - name: Commit & push tag bump
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add helm/backend/values-staging.yaml helm/frontend/values-staging.yaml
+          git diff --staged --quiet || \
+            git commit -m "ci(staging): bump image tags to ${{ github.sha }} [skip ci]"
+          git push
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
+
+      - name: Trigger ArgoCD hard refresh (staging)
+        run: |
+          kubectl annotate app financeguard-backend-staging \
+            argocd.argoproj.io/refresh=hard -n argocd --overwrite
+          kubectl annotate app financeguard-frontend-staging \
+            argocd.argoproj.io/refresh=hard -n argocd --overwrite
+
+      - name: Wait for staging rollout
+        run: |
+          sleep 30
+          kubectl rollout status deployment/financeguard-backend-staging-backend  -n staging --timeout=180s
+          kubectl rollout status deployment/financeguard-frontend-staging-frontend -n staging --timeout=180s
+
+  # ─── 4c. Deploy → prod  (production branch only) ──────────────────────────
+  deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [ docker-scan, terraform-check ]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/production'
+    environment: production          # requires manual approval in GitHub Environments
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push backend image
+        env:
+          IMAGE: ${{ env.ECR_REGISTRY }}/financeguard-backend
+        run: |
+          docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:prod-latest ./app/backend
+          docker push $IMAGE:${{ github.sha }}
+          docker push $IMAGE:prod-latest
+
+      - name: Build & push frontend image
+        env:
+          IMAGE: ${{ env.ECR_REGISTRY }}/financeguard-frontend
+        run: |
+          docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:prod-latest ./app/frontend
+          docker push $IMAGE:${{ github.sha }}
+          docker push $IMAGE:prod-latest
+
+      - name: Bump image tags in prod Helm values
+        run: |
+          sed -i "s/^  tag:.*/  tag: \"${{ github.sha }}\"/" helm/backend/values-prod.yaml
+          sed -i "s/^  tag:.*/  tag: \"${{ github.sha }}\"/" helm/frontend/values-prod.yaml
+
+      - name: Commit & push tag bump
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add helm/backend/values-prod.yaml helm/frontend/values-prod.yaml
+          git diff --staged --quiet || \
+            git commit -m "ci(prod): bump image tags to ${{ github.sha }} [skip ci]"
+          git push
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
+
+      - name: Trigger ArgoCD hard refresh (prod)
+        run: |
+          kubectl annotate app financeguard-backend-prod \
+            argocd.argoproj.io/refresh=hard -n argocd --overwrite
+          kubectl annotate app financeguard-frontend-prod \
+            argocd.argoproj.io/refresh=hard -n argocd --overwrite
+
+      - name: Wait for prod rollout
+        run: |
+          sleep 30
+          kubectl rollout status deployment/financeguard-backend-prod-backend  -n prod --timeout=180s
+          kubectl rollout status deployment/financeguard-frontend-prod-frontend -n prod --timeout=180s

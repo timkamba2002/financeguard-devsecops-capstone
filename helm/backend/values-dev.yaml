@@ -1,0 +1,11 @@
+replicaCount: 2
+
+env:
+  ENVIRONMENT: "dev"
+  SKIP_AUTH_VERIFICATION: "true"
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80

@@ -3,12 +3,18 @@ Integration tests run against a live deployed environment.
 Set API_URL env var before running:
   API_URL=http://<alb-hostname> pytest tests/integration/ -v
 """
+
 import os
 import time
 import requests
 import pytest
 
 BASE = os.environ.get("API_URL", "http://localhost:8000").rstrip("/")
+# In dev/staging the backend runs with SKIP_AUTH_VERIFICATION=true so any
+# Bearer token is accepted. Use a fixed demo token here so these tests
+# also work against environments where auth is enforced via a real token.
+AUTH_TOKEN = os.environ.get("INTEGRATION_TOKEN", "demo-token")
+HEADERS = {"Authorization": f"Bearer {AUTH_TOKEN}"}
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -39,11 +45,11 @@ class TestHealth:
 
 class TestTransactionsAPI:
     def test_get_transactions_returns_200(self):
-        r = requests.get(f"{BASE}/api/v1/transactions", timeout=10)
+        r = requests.get(f"{BASE}/api/v1/transactions", headers=HEADERS, timeout=10)
         assert r.status_code == 200
 
     def test_get_transactions_returns_list(self):
-        r = requests.get(f"{BASE}/api/v1/transactions", timeout=10)
+        r = requests.get(f"{BASE}/api/v1/transactions", headers=HEADERS, timeout=10)
         assert isinstance(r.json(), list)
 
     def test_create_transaction(self):
@@ -53,7 +59,9 @@ class TestTransactionsAPI:
             "category": "Test",
             "type": "income",
         }
-        r = requests.post(f"{BASE}/api/v1/transactions", json=payload, timeout=10)
+        r = requests.post(
+            f"{BASE}/api/v1/transactions", json=payload, headers=HEADERS, timeout=10
+        )
         assert r.status_code == 201
         data = r.json()
         assert data["description"] == payload["description"]
@@ -67,11 +75,15 @@ class TestTransactionsAPI:
             "category": "Test",
             "type": "expense",
         }
-        create = requests.post(f"{BASE}/api/v1/transactions", json=payload, timeout=10)
+        create = requests.post(
+            f"{BASE}/api/v1/transactions", json=payload, headers=HEADERS, timeout=10
+        )
         assert create.status_code == 201
         created_id = create.json()["id"]
 
-        listing = requests.get(f"{BASE}/api/v1/transactions", timeout=10)
+        listing = requests.get(
+            f"{BASE}/api/v1/transactions", headers=HEADERS, timeout=10
+        )
         ids = [t["id"] for t in listing.json()]
         assert created_id in ids, f"Transaction {created_id} not found in listing"
 
@@ -79,6 +91,7 @@ class TestTransactionsAPI:
         r = requests.post(
             f"{BASE}/api/v1/transactions",
             json={"description": "missing required fields"},
+            headers=HEADERS,
             timeout=10,
         )
         assert r.status_code == 422

@@ -62,8 +62,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-security = HTTPBearer()
 SKIP_AUTH_VERIFICATION = os.getenv("SKIP_AUTH_VERIFICATION", "true").lower() == "true"
+# auto_error=False returns None instead of 403 when no Authorization header is present,
+# allowing SKIP_AUTH_VERIFICATION to bypass auth without requiring any header.
+security = HTTPBearer(auto_error=not SKIP_AUTH_VERIFICATION)
 
 
 class TransactionCreate(BaseModel):
@@ -88,6 +90,8 @@ def get_current_user(
 ) -> dict:
     if SKIP_AUTH_VERIFICATION:
         return {"user_id": "demo-user-123"}
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     raise HTTPException(status_code=501, detail="Full auth not implemented")
 
 

@@ -1,0 +1,57 @@
+# Grafana Tempo Helm values — distributed tracing backend
+# Receives traces via OTLP (from OTel Collector), queryable in Grafana.
+#
+# Install: helm upgrade --install tempo grafana/tempo \
+#            --namespace monitoring -f this-file.yaml --version 1.7.2
+
+tempo:
+  enabled: true
+
+  # Single-binary (monolithic) mode — fine for capstone scale.
+  # For high-volume prod, switch to distributed mode with S3 backend.
+  reportingEnabled: false
+
+  server:
+    http_listen_port: 3100
+
+  storage:
+    trace:
+      backend: local    # change to s3 for production
+      local:
+        path: /var/tempo/traces
+
+  # Receive traces over OTLP (from the OTel Collector in this stack)
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: 0.0.0.0:4318
+        grpc:
+          endpoint: 0.0.0.0:4317
+    # Also accept Jaeger format in case any legacy instrumentation is used
+    jaeger:
+      protocols:
+        thrift_http:
+          endpoint: 0.0.0.0:14268
+
+  # Service-graph + span metrics — powers the Grafana service map view
+  metricsGenerator:
+    enabled: true
+    remoteWriteUrl: "http://prometheus-stack-kube-prom-prometheus.monitoring.svc.cluster.local:9090/api/v1/write"
+
+  retention: 48h    # traces retained 48h (extend for production)
+
+persistence:
+  enabled: true
+  size: 10Gi
+
+resources:
+  requests:
+    cpu:    100m
+    memory: 256Mi
+  limits:
+    cpu:    500m
+    memory: 512Mi
+
+serviceMonitor:
+  enabled: true    # exposes Tempo's own /metrics to Prometheus

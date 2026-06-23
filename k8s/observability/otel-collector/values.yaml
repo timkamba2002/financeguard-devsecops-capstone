@@ -1,0 +1,152 @@
+# OpenTelemetry Collector Helm values
+#
+# Role: central telemetry hub
+#   Receive  → OTLP from app (traces + metrics + logs)
+#   Process  → batch, add resource attributes
+#   Export   → Tempo (traces), Prometheus (metrics), Loki (logs)
+#
+# App instrumentation endpoint (from within the cluster):
+#   gRPC:  otel-collector.monitoring.svc.cluster.local:4317
+#   HTTP:  otel-collector.monitoring.svc.cluster.local:4318
+#
+# Install: helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
+#            --namespace monitoring -f this-file.yaml --version 0.82.0
+
+mode: deployment    # single Deployment; use daemonset if also collecting node metrics
+
+replicaCount: 1
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag:        "0.100.0"
+
+config:
+  receivers:
+    # Accept OTLP from the FastAPI backend (opentelemetry-sdk)
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+          cors:
+            allowed_origins: ["*"]
+
+    # Scrape Prometheus metrics from the collector itself
+    prometheus:
+      config:
+        scrape_configs:
+          - job_name: otel-collector
+            static_configs:
+              - targets: [ "localhost:8888" ]
+
+  processors:
+    batch:
+      timeout: 1s
+      send_batch_size: 1024
+
+    # Enrich all telemetry with K8s pod metadata
+    k8sattributes:
+      auth_type: serviceAccount
+      passthrough: false
+      extract:
+        metadata:
+          - k8s.pod.name
+          - k8s.pod.uid
+          - k8s.namespace.name
+          - k8s.node.name
+          - k8s.deployment.name
+        labels:
+          - tag_name: app
+            key:      app
+            from:     pod
+      pod_association:
+        - sources:
+            - from: resource_attribute
+              name: k8s.pod.ip
+
+    # Cap memory to prevent OOM
+    memory_limiter:
+      check_interval:         5s
+      limit_percentage:       80
+      spike_limit_percentage: 15
+
+    # Add environment label from pod namespace
+    resource:
+      attributes:
+        - key:    deployment.environment
+          action: upsert
+          value:  "{{.Namespace}}"
+
+  exporters:
+    # Traces → Tempo
+    otlp/tempo:
+      endpoint: tempo.monitoring.svc.cluster.local:4317
+      tls:
+        insecure: true
+
+    # Metrics → Prometheus (remote write)
+    prometheusremotewrite:
+      endpoint: "http://prometheus-stack-kube-prom-prometheus.monitoring.svc.cluster.local:9090/api/v1/write"
+      tls:
+        insecure: true
+
+    # Logs → Loki
+    loki:
+      endpoint: "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+      labels:
+        resource:
+          k8s.namespace.name: "namespace"
+          k8s.pod.name:       "pod"
+          app:                "app"
+
+    # Debug exporter (remove in production)
+    debug:
+      verbosity: basic
+
+  service:
+    pipelines:
+      traces:
+        receivers:  [ otlp ]
+        processors: [ memory_limiter, k8sattributes, batch ]
+        exporters:  [ otlp/tempo ]
+
+      metrics:
+        receivers:  [ otlp, prometheus ]
+        processors: [ memory_limiter, k8sattributes, resource, batch ]
+        exporters:  [ prometheusremotewrite ]
+
+      logs:
+        receivers:  [ otlp ]
+        processors: [ memory_limiter, k8sattributes, batch ]
+        exporters:  [ loki ]
+
+    telemetry:
+      metrics:
+        address: 0.0.0.0:8888
+
+ports:
+  otlp:
+    enabled: true
+    containerPort: 4317
+    servicePort:   4317
+    protocol:      TCP
+  otlp-http:
+    enabled: true
+    containerPort: 4318
+    servicePort:   4318
+    protocol:      TCP
+
+serviceMonitor:
+  enabled: true    # Prometheus scrapes OTel Collector's own metrics
+
+clusterRole:
+  create: true     # needed by k8sattributes processor to read pod metadata
+
+resources:
+  requests:
+    cpu:    100m
+    memory: 200Mi
+  limits:
+    cpu:    500m
+    memory: 400Mi

@@ -1,255 +1,91 @@
-name: FinanceGuard DevSecOps Pipeline
+name: FinanceGuard CI/CD — Trunk-Based (Model B)
 
-# ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  DEMO vs PRODUCTION GATING — READ THIS FIRST                            ║
-# ║                                                                          ║
-# ║  Every security scan step is marked with one of:                        ║
-# ║                                                                          ║
-# ║  # DEMO: continue-on-error: true                                        ║
-# ║  #   → scan runs, results are uploaded to GitHub Security tab           ║
-# ║  #   → pipeline stays GREEN for presentation purposes                   ║
-# ║  #   → in a real environment this line MUST be removed                  ║
-# ║                                                                          ║
-# ║  # PRODUCTION: remove continue-on-error — hard fail required            ║
-# ║  #   → describes what the gate should enforce in production              ║
-# ║                                                                          ║
-# ║  This gives you a clean green CI run for the demo AND a clear           ║
-# ║  explanation of exactly which gate each tool enforces.                   ║
-# ╚══════════════════════════════════════════════════════════════════════════╝
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║  TRUNK-BASED DEVELOPMENT (Model B)                                       ║
+# ║                                                                           ║
+# ║  Branch strategy:                                                         ║
+# ║    main        — single source of truth, protected                       ║
+# ║    feature/*   — short-lived, branch from main, PR to main               ║
+# ║    fix/*       — same as feature branches                                ║
+# ║                                                                           ║
+# ║  Promotion strategy:                                                      ║
+# ║    Environments are NOT separate git branches.                           ║
+# ║    The same commit SHA flows dev → staging → prod via GitHub             ║
+# ║    Environment approval gates (namespace + values file change only).     ║
+# ║                                                                           ║
+# ║  Flow:                                                                    ║
+# ║    feature/* → PR → [Stage 0: PR Validation] → merge to main            ║
+# ║    main push → [Stage 1: Build & Sign] → [Stage 2: Dev auto]             ║
+# ║             → [Stage 3: Staging ✋ approval] → [Stage 4: Prod ✋ approval] ║
+# ║             → [Stage 5: Evidence bundle + Release]                       ║
+# ║                                                                           ║
+# ╠═══════════════════════════════════════════════════════════════════════════╣
+# ║  DEMO vs PRODUCTION GATING — key principle                               ║
+# ║                                                                           ║
+# ║  Every security scan step is annotated:                                  ║
+# ║    # DEMO: continue-on-error: true                                       ║
+# ║    #   → scan runs, SARIF uploaded, pipeline stays GREEN                 ║
+# ║    # PRODUCTION: remove continue-on-error — hard fail required          ║
+# ║    #   → describes what the gate enforces in a real production env       ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
 
 on:
   push:
-    branches: [ main, staging, development ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, staging, development ]
+    branches: [ main ]
+    types: [ opened, synchronize, reopened ]
 
 env:
   AWS_REGION:    us-east-1
   ECR_REGISTRY:  866934333672.dkr.ecr.us-east-1.amazonaws.com
+  ECR_BACKEND:   866934333672.dkr.ecr.us-east-1.amazonaws.com/financeguard-backend
+  ECR_FRONTEND:  866934333672.dkr.ecr.us-east-1.amazonaws.com/financeguard-frontend
   EKS_CLUSTER:   financeguard-eks-dev
   CHART_REPO:    oci://866934333672.dkr.ecr.us-east-1.amazonaws.com/charts
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# PIPELINE STAGES
-#
-#  Pre-flight  Gitleaks secret scan
-#  Stage 1     BUILD          Python wheel + frontend assets
-#  Stage 2     TEST           pytest · coverage · JUnit XML · Black lint
-#  Stage 2b    SONARCLOUD     Quality gate (needs coverage XML)
-#  Stage 3     SECURITY SCAN  Bandit · Safety · Semgrep · Hadolint · Checkov · TFLint
-#  Stage 4–5   BUILD → PUSH   Docker (layer cache) → Trivy → SBOM → ECR push
-#                              → Cosign image signing (OIDC keyless)
-#  Stage 6     HELM PACKAGE   helm package → .tgz → ECR OCI push
-#
-#  development branch:
-#    Stage 7a  DEPLOY DEV     cosign verify → helm diff → helm upgrade --atomic
-#    Stage 8a  INT TESTS      pytest tests/integration/ vs live dev ALB
-#    Stage 8a  DAST           OWASP ZAP baseline (report only in demo)
-#    Stage 9a  PROMOTE        ECR retag :dev-verified · auto PR dev→staging
-#
-#  staging branch:
-#    Stage 7b  DEPLOY STAGING cosign verify → helm diff → helm upgrade --atomic
-#    Stage 8b  INT TESTS      pytest tests/integration/
-#    Stage 8b  DAST           OWASP ZAP full scan
-#    Stage 9b  PROMOTE        ECR retag :staging-verified · auto PR staging→main
-#
-#  main branch:
-#    Stage 7c  DEPLOY PROD    MANUAL APPROVAL → cosign verify → helm diff → helm upgrade
-#    Stage 8c  RELEASE        smoke test · :stable retag · evidence bundle · GitHub Release
-#    ON FAIL   NOTIFY         Slack alert
-#
-# Required GitHub Secrets:
-#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY   (already added)
-#   SONAR_TOKEN                                (already added)
-#   SLACK_WEBHOOK_URL                          (already added)
-#   GITLEAKS_LICENSE                           (optional — free tier works without it)
-# ═══════════════════════════════════════════════════════════════════════════════
-
+# ─────────────────────────────────────────────────────────────────────────────
+#  STAGE 0 · PR VALIDATION
+#  Runs on every pull_request targeting main.
+#  These are the merge gatekeepers — enforced via branch protection rules.
+#  See docs/branch-protection.md for setup.
+# ─────────────────────────────────────────────────────────────────────────────
 jobs:
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # PRE-FLIGHT · Gitleaks Secret Scan
-  #
-  # WHAT THIS CATCHES: API keys, tokens, passwords, private keys committed
-  # to git history or the current commit.
-  #
-  # DEMO:       continue-on-error — scan runs, findings appear in the Actions
-  #             log, but the pipeline stays green.
-  # PRODUCTION: remove continue-on-error. A verified secret in code MUST
-  #             hard-fail — every subsequent job would be building on a
-  #             compromised foundation.
-  # ─────────────────────────────────────────────────────────────────────────────
-  secret-scan:
-    name: "Pre-flight · Gitleaks Secret Scan"
+  pr-secret-scan:
+    name: "PR · Secret Scan (Gitleaks)"
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0    # full history — gitleaks checks all commits
+          fetch-depth: 0    # full history — Gitleaks scans all commits in the PR
 
+      # DEMO: continue-on-error keeps the PR check green even if secrets are found.
+      # PRODUCTION: remove continue-on-error. A leaked secret in a PR MUST block
+      # the merge. Secrets in git history cannot be un-leaked.
       - uses: gitleaks/gitleaks-action@v2
-        continue-on-error: true   # DEMO ONLY — remove for production (verified secrets MUST block)
+        continue-on-error: true   # DEMO ONLY — remove for production
         env:
           GITHUB_TOKEN:     ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # STAGE 1 · Build Artifacts
-  # ─────────────────────────────────────────────────────────────────────────────
-  build:
-    name: "Stage 1 · Build Artifacts"
+  pr-sast:
+    name: "PR · SAST — Semgrep (primary)"
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - run: pip install build wheel
-
-      - name: Build Python wheel (immutable build artifact)
-        run: |
-          cd app/backend
-          python -m build --wheel --outdir ../../dist/
-          echo "── Wheel ──────────────────────"
-          ls -lh ../../dist/
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name:           backend-wheel-${{ github.sha }}
-          path:           dist/*.whl
-          retention-days: 7
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name:           frontend-assets-${{ github.sha }}
-          path:           app/frontend/
-          retention-days: 7
-
-  # ─────────────────────────────────────────────────────────────────────────────
-  # STAGE 2 · Test & Coverage
-  # ─────────────────────────────────────────────────────────────────────────────
-  test:
-    name: "Stage 2 · Test & Coverage"
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: backend-wheel-${{ github.sha }}
-          path: dist/
-
-      - run: |
-          pip install dist/*.whl
-          pip install pytest pytest-cov black
-
-      - name: Lint – Black
-        run: black --check app/backend/
-
-      - name: Unit tests with coverage
-        run: |
-          pytest app/backend/tests/ \
-            --junitxml=test-results/junit.xml \
-            --cov=app/backend \
-            --cov-report=xml:test-results/coverage.xml \
-            --cov-report=html:test-results/coverage-html/ \
-            -v
-        env:
-          DATABASE_URL: "sqlite:///./test.db"
-
-      - uses: dorny/test-reporter@v1
-        if: always()
-        with:
-          name:          Unit Test Results
-          path:          test-results/junit.xml
-          reporter:      java-junit
-          fail-on-error: true    # test failures ALWAYS hard fail — no demo exception
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name:           test-results-${{ github.sha }}
-          path:           test-results/
-          retention-days: 30
-
-  # ─────────────────────────────────────────────────────────────────────────────
-  # STAGE 2b · SonarCloud Quality Gate
-  #
-  # WHAT THIS CATCHES: code smells, duplications, security hotspots, coverage
-  # drops below the quality gate threshold.
-  #
-  # DEMO:       continue-on-error — analysis runs, results visible at
-  #             sonarcloud.io, pipeline stays green.
-  # PRODUCTION: remove continue-on-error. A failing quality gate (coverage < 80%,
-  #             new security hotspot, rating drops to D/E) MUST block the build.
-  # ─────────────────────────────────────────────────────────────────────────────
-  sonarcloud:
-    name: "Stage 2b · SonarCloud Quality Gate"
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: test-results-${{ github.sha }}
-          path: test-results/
-
-      - uses: SonarSource/sonarcloud-github-action@master
-        continue-on-error: true   # DEMO ONLY — remove for production (failing quality gate MUST block)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN:  ${{ secrets.SONAR_TOKEN }}
-
-  # ─────────────────────────────────────────────────────────────────────────────
-  # STAGE 3 · Security & IaC Scan
-  #
-  # PRIMARY SAST:   Semgrep (OWASP Top-10, secrets, security-audit ruleset)
-  # SECONDARY SAST: Bandit (Python-specific rules)
-  # DEPS:           Safety (CVE audit against Python dependencies)
-  # DOCKER:         Hadolint (Dockerfile best practices)
-  # IAC:            Checkov (Terraform misconfigs) + TFLint (provider rules)
-  #
-  # All SARIF results → GitHub Security tab (Code Scanning).
-  #
-  # DEMO:       continue-on-error on each scan — findings visible in Security tab
-  # PRODUCTION: Semgrep and Bandit HIGH MUST hard-fail.
-  #             Safety known CVEs MUST hard-fail.
-  #             Checkov CRITICAL checks MUST hard-fail.
-  # ─────────────────────────────────────────────────────────────────────────────
-  security-scan:
-    name: "Stage 3 · Security & IaC Scan"
-    runs-on: ubuntu-latest
-    needs: build
+    if: github.event_name == 'pull_request'
     permissions:
       security-events: write
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
+      - run: pip install semgrep
 
-      - run: |
-          pip install -r app/backend/requirements.txt
-          pip install bandit safety semgrep
-
-      # ── Semgrep (PRIMARY SAST) ────────────────────────────────────────────────
-      # PRODUCTION: remove continue-on-error — HIGH/CRITICAL Semgrep findings
-      # (injection, broken auth, hardcoded secrets) MUST hard-fail.
-      - name: "SAST – Semgrep [PRIMARY] (OWASP + secrets + security-audit)"
+      # DEMO: continue-on-error keeps the PR check green.
+      # PRODUCTION: remove continue-on-error. HIGH/CRITICAL Semgrep findings
+      # (SQL injection, hardcoded credentials, broken authentication) MUST
+      # block the merge before vulnerable code reaches main.
+      - name: "Semgrep SAST (OWASP Top-10 + secrets + security-audit)"
         run: |
           semgrep scan \
             --config p/python \
@@ -264,55 +100,29 @@ jobs:
         if: always()
         with:
           sarif_file: semgrep.sarif
-          category:   semgrep
+          category:   semgrep-pr
 
-      # ── Bandit (SECONDARY SAST) ───────────────────────────────────────────────
-      # PRODUCTION: remove continue-on-error — HIGH severity Python findings MUST
-      # hard-fail (SQL injection via string concat, subprocess shell=True, etc.)
-      - name: "SAST – Bandit [secondary] (Python-specific rules)"
-        run: bandit -r app/backend/ -f json -o bandit-report.json -l || true
-        continue-on-error: true   # DEMO ONLY — remove for production
-
-      # ── Safety ───────────────────────────────────────────────────────────────
-      # PRODUCTION: remove continue-on-error — CVEs in direct dependencies MUST
-      # hard-fail (especially CRITICAL, e.g. RCE in a web framework).
-      - name: "Dependency audit – Safety"
-        run: safety check --full-report
-        continue-on-error: true   # DEMO ONLY — remove for production
-
-      # ── Hadolint ─────────────────────────────────────────────────────────────
-      - name: "Dockerfile lint – backend (Hadolint)"
-        uses: hadolint/hadolint-action@v3.1.0
-        continue-on-error: true   # DEMO ONLY — DL3 errors should fail in production
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          dockerfile: app/backend/Dockerfile
+          name:           pr-semgrep-${{ github.sha }}
+          path:           semgrep.sarif
+          retention-days: 30
 
-      - name: "Dockerfile lint – frontend (Hadolint)"
-        uses: hadolint/hadolint-action@v3.1.0
-        continue-on-error: true   # DEMO ONLY
-        with:
-          dockerfile: app/frontend/Dockerfile
+  pr-iac-scan:
+    name: "PR · IaC Scan (Checkov + TFLint)"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
 
-      # ── TFLint + Checkov ─────────────────────────────────────────────────────
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.5.0"
-
-      - run: terraform init -backend=false
-        working-directory: ./terraform
-
-      - uses: terraform-linters/setup-tflint@v4
-
-      - name: "IaC lint – TFLint"
-        run: |
-          tflint --init
-          tflint --format compact
-        working-directory: ./terraform
-        continue-on-error: true   # DEMO ONLY — TFLint errors should fail in production
-
-      # PRODUCTION: remove continue-on-error — Checkov CRITICAL misconfigs (open
-      # S3 bucket, unencrypted RDS, public security group) MUST hard-fail.
-      - name: "IaC scan – Checkov (Terraform)"
+      # DEMO: continue-on-error keeps the PR check green.
+      # PRODUCTION: remove continue-on-error. Critical Terraform misconfigs
+      # (open S3, unencrypted RDS, 0.0.0.0/0 security groups) MUST block
+      # the merge — they reach production infra unchanged.
+      - name: "Checkov — Terraform IaC scan"
         uses: bridgecrewio/checkov-action@master
         continue-on-error: true   # DEMO ONLY — remove for production
         with:
@@ -326,44 +136,123 @@ jobs:
         if: always()
         with:
           sarif_file: checkov.sarif
-          category:   checkov
+          category:   checkov-pr
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.0"
+
+      - run: terraform init -backend=false
+        working-directory: ./terraform
+
+      - uses: terraform-linters/setup-tflint@v4
+
+      # DEMO: continue-on-error keeps the PR check green.
+      # PRODUCTION: remove continue-on-error. TFLint errors signal deprecated
+      # API usage and provider rule violations that cause runtime failures.
+      - name: "TFLint — provider rules"
+        run: |
+          tflint --init
+          tflint --format compact
+        working-directory: ./terraform
+        continue-on-error: true   # DEMO ONLY — remove for production
+
+  pr-test:
+    name: "PR · Unit Tests & Coverage"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: |
+          pip install -r app/backend/requirements.txt
+          pip install pytest pytest-cov black
+
+      - name: "Lint — Black"
+        run: black --check app/backend/
+
+      # Tests ALWAYS hard fail — no continue-on-error.
+      # A failing test MUST NOT merge to main. No exceptions.
+      - name: "pytest + coverage"
+        run: |
+          pytest app/backend/tests/ \
+            --junitxml=test-results/junit.xml \
+            --cov=app/backend \
+            --cov-report=xml:test-results/coverage.xml \
+            --cov-report=html:test-results/coverage-html/ \
+            -v
+        env:
+          DATABASE_URL: sqlite:///./test.db
+
+      - uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name:          Unit Test Results (PR)
+          path:          test-results/junit.xml
+          reporter:      java-junit
+          fail-on-error: true
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name:           security-reports-${{ github.sha }}
-          path: |
-            bandit-report.json
-            semgrep.sarif
+          name:           pr-test-results-${{ github.sha }}
+          path:           test-results/
           retention-days: 30
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # STAGE 4–5 · Build → Scan → Sign → Push
-  #
-  # Build with GitHub Actions layer cache → Trivy vulnerability scan → SBOM →
-  # push to ECR (only if Trivy passes) → Cosign keyless signing.
-  #
-  # TRIVY GATE:
-  #   DEMO:       continue-on-error — vulnerable image CAN reach ECR for demo
-  #   PRODUCTION: remove continue-on-error — CRITICAL/HIGH fixable CVE MUST prevent push
-  #
-  # COSIGN SIGNING:
-  #   Uses GitHub Actions OIDC (keyless, no key management).
-  #   Signature is stored in ECR alongside the image as an OCI artifact.
-  #   DEMO:       continue-on-error — signing failure won't block demo
-  #   PRODUCTION: remove continue-on-error — unsigned images MUST NOT deploy
-  # ─────────────────────────────────────────────────────────────────────────────
-  build-push:
-    name: "Stage 4–5 · Build, Scan, Sign & Push"
+  pr-sonarcloud:
+    name: "PR · SonarCloud Quality Gate"
     runs-on: ubuntu-latest
-    needs: [ test, security-scan, secret-scan ]
-    if: github.event_name == 'push'
+    if: github.event_name == 'pull_request'
+    needs: pr-test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pr-test-results-${{ github.sha }}
+          path: test-results/
+
+      # DEMO: continue-on-error keeps the PR check green.
+      # PRODUCTION: remove continue-on-error. Failing quality gate (coverage
+      # drop, new security hotspot, rating D/E) MUST block the merge.
+      - uses: SonarSource/sonarcloud-github-action@master
+        continue-on-error: true   # DEMO ONLY — remove for production
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN:  ${{ secrets.SONAR_TOKEN }}
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  STAGE 1 · BUILD, SCAN, SIGN & PUSH  (main branch only)
+#
+#  Triggered when a PR merges to main.
+#  Produces immutable Docker images tagged with the commit SHA.
+#  These exact images (not rebuilt) flow through every environment.
+#  Trivy scans each image; Syft generates SBOMs; cosign signs both.
+#  Helm charts are packaged and pushed to ECR OCI.
+# ─────────────────────────────────────────────────────────────────────────────
+
+  build-sign-push:
+    name: "Stage 1 · Build, Scan, Sign & Push"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       security-events: write
       id-token:        write    # required for OIDC cosign keyless signing
       contents:        read
+    outputs:
+      chart-version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+
+      - id: ver
+        run: echo "version=0.1.${{ github.run_number }}" >> $GITHUB_OUTPUT
 
       - uses: docker/setup-buildx-action@v3
 
@@ -375,8 +264,8 @@ jobs:
 
       - uses: aws-actions/amazon-ecr-login@v2
 
-      # ── Build backend (local, not pushed yet) ────────────────────────────────
-      - name: Build backend image (GHA layer cache)
+      # ── Backend ────────────────────────────────────────────────────────────
+      - name: "Build backend image (GHA layer cache)"
         uses: docker/build-push-action@v5
         with:
           context:    ./app/backend
@@ -386,9 +275,10 @@ jobs:
           cache-from: type=gha,scope=backend
           cache-to:   type=gha,scope=backend,mode=max
 
-      # PRODUCTION: remove continue-on-error — CRITICAL/HIGH fixable CVEs MUST
-      # block the build; a vulnerable image must never reach ECR.
-      - name: "Trivy scan – backend (FAIL on fixable CRITICAL/HIGH)"
+      # DEMO: continue-on-error prevents build failure on vulnerabilities.
+      # PRODUCTION: remove continue-on-error. A CRITICAL/HIGH fixable CVE MUST
+      # block the push — a vulnerable image in ECR can be deployed anywhere.
+      - name: "Trivy — backend (CRITICAL/HIGH fixable CVEs)"
         uses: aquasecurity/trivy-action@master
         continue-on-error: true   # DEMO ONLY — remove for production
         with:
@@ -400,15 +290,15 @@ jobs:
           vuln-type:      os,library
           severity:       CRITICAL,HIGH
 
-      - name: "SBOM – backend (Syft/SPDX)"
+      - name: "Syft SBOM — backend (SPDX 2.3)"
         uses: anchore/sbom-action@v0
         with:
           image:         financeguard-backend:${{ github.sha }}
           artifact-name: sbom-backend-${{ github.sha }}.spdx.json
           output-file:   sbom-backend.spdx.json
 
-      # ── Build frontend ───────────────────────────────────────────────────────
-      - name: Build frontend image (GHA layer cache)
+      # ── Frontend ───────────────────────────────────────────────────────────
+      - name: "Build frontend image (GHA layer cache)"
         uses: docker/build-push-action@v5
         with:
           context:    ./app/frontend
@@ -418,7 +308,9 @@ jobs:
           cache-from: type=gha,scope=frontend
           cache-to:   type=gha,scope=frontend,mode=max
 
-      - name: "Trivy scan – frontend (FAIL on fixable CRITICAL/HIGH)"
+      # DEMO: continue-on-error prevents build failure on vulnerabilities.
+      # PRODUCTION: remove continue-on-error. Same gate as backend.
+      - name: "Trivy — frontend (CRITICAL/HIGH fixable CVEs)"
         uses: aquasecurity/trivy-action@master
         continue-on-error: true   # DEMO ONLY — remove for production
         with:
@@ -430,7 +322,7 @@ jobs:
           vuln-type:      os,library
           severity:       CRITICAL,HIGH
 
-      - name: "SBOM – frontend (Syft/SPDX)"
+      - name: "Syft SBOM — frontend (SPDX 2.3)"
         uses: anchore/sbom-action@v0
         with:
           image:         financeguard-frontend:${{ github.sha }}
@@ -443,46 +335,42 @@ jobs:
           sarif_file: trivy-backend.sarif
           category:   trivy
 
-      # ── Push images to ECR ───────────────────────────────────────────────────
-      - name: Push backend to ECR
+      # ── Push to ECR ────────────────────────────────────────────────────────
+      - name: "Push backend to ECR"
         run: |
-          B=${{ env.ECR_REGISTRY }}/financeguard-backend
-          docker tag financeguard-backend:${{ github.sha }} $B:${{ github.sha }}
-          docker tag financeguard-backend:${{ github.sha }} $B:${{ github.ref_name }}-latest
-          docker push $B:${{ github.sha }}
-          docker push $B:${{ github.ref_name }}-latest
+          docker tag financeguard-backend:${{ github.sha }} ${{ env.ECR_BACKEND }}:${{ github.sha }}
+          docker tag financeguard-backend:${{ github.sha }} ${{ env.ECR_BACKEND }}:latest
+          docker push ${{ env.ECR_BACKEND }}:${{ github.sha }}
+          docker push ${{ env.ECR_BACKEND }}:latest
 
-      - name: Push frontend to ECR
+      - name: "Push frontend to ECR"
         run: |
-          F=${{ env.ECR_REGISTRY }}/financeguard-frontend
-          docker tag financeguard-frontend:${{ github.sha }} $F:${{ github.sha }}
-          docker tag financeguard-frontend:${{ github.sha }} $F:${{ github.ref_name }}-latest
-          docker push $F:${{ github.sha }}
-          docker push $F:${{ github.ref_name }}-latest
+          docker tag financeguard-frontend:${{ github.sha }} ${{ env.ECR_FRONTEND }}:${{ github.sha }}
+          docker tag financeguard-frontend:${{ github.sha }} ${{ env.ECR_FRONTEND }}:latest
+          docker push ${{ env.ECR_FRONTEND }}:${{ github.sha }}
+          docker push ${{ env.ECR_FRONTEND }}:latest
 
-      # ── Cosign image signing (OIDC keyless) ──────────────────────────────────
-      # No key management — GitHub Actions OIDC token is the identity.
+      # ── Cosign keyless image signing ───────────────────────────────────────
+      # No keys to rotate — GitHub Actions OIDC token is the identity.
+      # Identity recorded in public transparency log:
+      #   https://github.com/<repo>/.github/workflows/ci-cd.yml@refs/heads/main
       # Signature stored as an OCI artifact in ECR alongside the image.
-      # Identity recorded: github.com/<repo>/.github/workflows/ci-cd.yml@<ref>
       #
-      # PRODUCTION: remove continue-on-error — an unsigned image reaching a
-      # deploy job MUST be treated as a supply-chain integrity failure.
+      # DEMO: continue-on-error so the pipeline continues if signing fails.
+      # PRODUCTION: remove continue-on-error. An unsigned image reaching a
+      # deploy job is a supply-chain integrity failure — MUST hard fail.
       - uses: sigstore/cosign-installer@v3
 
-      - name: "Sign backend image (cosign OIDC keyless)"
-        run: |
-          cosign sign --yes \
-            ${{ env.ECR_REGISTRY }}/financeguard-backend:${{ github.sha }}
+      - name: "Cosign sign backend image (OIDC keyless)"
+        run: cosign sign --yes ${{ env.ECR_BACKEND }}:${{ github.sha }}
         continue-on-error: true   # DEMO ONLY — remove for production
 
-      - name: "Sign frontend image (cosign OIDC keyless)"
-        run: |
-          cosign sign --yes \
-            ${{ env.ECR_REGISTRY }}/financeguard-frontend:${{ github.sha }}
+      - name: "Cosign sign frontend image (OIDC keyless)"
+        run: cosign sign --yes ${{ env.ECR_FRONTEND }}:${{ github.sha }}
         continue-on-error: true   # DEMO ONLY — remove for production
 
-      # ── ECR lifecycle policies ────────────────────────────────────────────────
-      - name: Apply ECR lifecycle policies (prune untagged > 14 days)
+      # ── ECR lifecycle policies ─────────────────────────────────────────────
+      - name: "Apply ECR lifecycle policies"
         run: |
           for repo in financeguard-backend financeguard-frontend; do
             aws ecr put-lifecycle-policy \
@@ -492,65 +380,32 @@ jobs:
                   {
                     "rulePriority": 1,
                     "description": "Expire untagged images after 14 days",
-                    "selection": {
-                      "tagStatus": "untagged",
-                      "countType": "sinceImagePushed",
-                      "countUnit": "days",
-                      "countNumber": 14
-                    },
-                    "action": {"type": "expire"}
+                    "selection": {"tagStatus":"untagged","countType":"sinceImagePushed","countUnit":"days","countNumber":14},
+                    "action": {"type":"expire"}
                   },
                   {
                     "rulePriority": 2,
-                    "description": "Keep last 20 verified promotion tags",
-                    "selection": {
-                      "tagStatus": "tagged",
-                      "tagPrefixList": ["dev-verified-","staging-verified-"],
-                      "countType": "imageCountMoreThan",
-                      "countNumber": 20
-                    },
-                    "action": {"type": "expire"}
+                    "description": "Keep only 20 most recent stable-tagged images",
+                    "selection": {"tagStatus":"tagged","tagPrefixList":["stable"],"countType":"imageCountMoreThan","countNumber":20},
+                    "action": {"type":"expire"}
                   }
                 ]
               }'
           done
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # STAGE 6 · Helm Package & Push to ECR OCI
-  # ─────────────────────────────────────────────────────────────────────────────
-  helm-package:
-    name: "Stage 6 · Package & Push Helm Charts"
-    runs-on: ubuntu-latest
-    needs: build-push
-    if: github.event_name == 'push'
-    outputs:
-      chart-version: ${{ steps.ver.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - id: ver
-        run: echo "version=0.1.${{ github.run_number }}" >> $GITHUB_OUTPUT
-
-      - name: Package charts
+      # ── Helm package & push ────────────────────────────────────────────────
+      - name: "Package Helm charts"
         run: |
-          helm package helm/backend  --version ${{ steps.ver.outputs.version }} \
-            --app-version ${{ github.sha }} --destination dist/charts/
-          helm package helm/frontend --version ${{ steps.ver.outputs.version }} \
-            --app-version ${{ github.sha }} --destination dist/charts/
+          helm package helm/backend \
+            --version ${{ steps.ver.outputs.version }} \
+            --app-version ${{ github.sha }} \
+            --destination dist/
+          helm package helm/frontend \
+            --version ${{ steps.ver.outputs.version }} \
+            --app-version ${{ github.sha }} \
+            --destination dist/
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name:           helm-charts-${{ github.sha }}
-          path:           dist/charts/*.tgz
-          retention-days: 30
-
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
-
-      - name: Ensure chart ECR repos exist
+      - name: "Ensure chart ECR repositories exist"
         run: |
           for repo in charts/backend charts/frontend; do
             aws ecr describe-repositories --repository-names "$repo" 2>/dev/null || \
@@ -558,27 +413,44 @@ jobs:
                 --image-scanning-configuration scanOnPush=true
           done
 
-      - name: Push charts to ECR OCI
+      - name: "Push Helm charts to ECR OCI"
         run: |
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
             helm registry login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
-          helm push dist/charts/backend-${{ steps.ver.outputs.version }}.tgz  ${{ env.CHART_REPO }}
-          helm push dist/charts/frontend-${{ steps.ver.outputs.version }}.tgz ${{ env.CHART_REPO }}
+          helm push dist/backend-${{ steps.ver.outputs.version }}.tgz  ${{ env.CHART_REPO }}
+          helm push dist/frontend-${{ steps.ver.outputs.version }}.tgz ${{ env.CHART_REPO }}
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # STAGE 7a · Deploy to Dev  (development branch only)
-  #
-  # Cosign verification is the first step — confirms the image was built and
-  # signed by this pipeline before it touches the cluster.
-  # helm diff previews the exact Kubernetes resource changes before applying.
-  # --atomic auto-rolls back if the rollout times out or pods crash-loop.
-  # ─────────────────────────────────────────────────────────────────────────────
+      # ── Upload artifacts ───────────────────────────────────────────────────
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name:           trivy-sarif-${{ github.sha }}
+          path: |
+            trivy-backend.sarif
+            trivy-frontend.sarif
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name:           helm-charts-${{ github.sha }}
+          path:           dist/*.tgz
+          retention-days: 30
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  STAGE 2 · DEPLOY TO DEV  (automatic — no approval)
+#
+#  `dev` GitHub Environment has no required reviewers → auto-deploys.
+#  cosign verify confirms the image was signed by this pipeline.
+#  helm diff previews exact Kubernetes resource changes before applying.
+#  --atomic auto-rolls back on timeout or crash-loop.
+# ─────────────────────────────────────────────────────────────────────────────
+
   deploy-dev:
-    name: "Stage 7 · Deploy to Dev"
+    name: "Stage 2 · Deploy → Dev (auto)"
     runs-on: ubuntu-latest
-    needs: [ build-push, helm-package ]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/development'
-    environment: dev
+    needs: build-sign-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: dev    # no required reviewers → deploys automatically
     steps:
       - uses: actions/checkout@v4
 
@@ -592,89 +464,103 @@ jobs:
 
       - run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
 
-      # ── Cosign signature verification ────────────────────────────────────────
-      # PRODUCTION: remove continue-on-error — an image without a valid signature
-      # from this pipeline MUST NOT be deployed (supply-chain integrity gate).
+      # ── Cosign verification ────────────────────────────────────────────────
+      # Confirms the image was built and signed by THIS CI pipeline.
+      # Without this, a manually-built or tampered image could silently deploy.
+      #
+      # DEMO: continue-on-error so the deploy proceeds even without signature.
+      # PRODUCTION: remove continue-on-error. An unsigned image MUST NOT deploy.
       - uses: sigstore/cosign-installer@v3
 
-      - name: "Verify image signatures (cosign)"
+      - name: "Cosign verify — backend + frontend"
         run: |
-          cosign verify \
-            --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-            ${{ env.ECR_REGISTRY }}/financeguard-backend:${{ github.sha }} \
-            2>&1 | tee cosign-verify.txt
+          {
+            echo "=== Backend ==="
+            cosign verify \
+              --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              ${{ env.ECR_BACKEND }}:${{ github.sha }}
+            echo "=== Frontend ==="
+            cosign verify \
+              --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              ${{ env.ECR_FRONTEND }}:${{ github.sha }}
+          } 2>&1 | tee cosign-verify-dev.txt
         continue-on-error: true   # DEMO ONLY — remove for production
 
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name:           cosign-verify-dev-${{ github.sha }}
-          path:           cosign-verify.txt
-          retention-days: 30
-
-      # ── Helm diff + upgrade ───────────────────────────────────────────────────
-      - name: Helm login to ECR OCI
+      # ── Helm deploy ────────────────────────────────────────────────────────
+      - name: "Helm login to ECR OCI"
         run: |
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
             helm registry login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
       - run: helm plugin install https://github.com/databus23/helm-diff 2>/dev/null || true
 
-      - name: "helm diff – backend (preview changes)"
+      - name: "helm diff — backend (dev)"
         run: |
-          helm diff upgrade financeguard-backend-dev \
-            ${{ env.CHART_REPO }}/backend --version 0.1.${{ github.run_number }} \
+          helm diff upgrade financeguard-backend \
+            ${{ env.CHART_REPO }}/backend \
+            --version 0.1.${{ github.run_number }} \
+            --namespace dev \
             -f helm/backend/values.yaml -f helm/backend/values-dev.yaml \
-            --set image.repository=${{ env.ECR_REGISTRY }}/financeguard-backend \
+            --set image.repository=${{ env.ECR_BACKEND }} \
             --set image.tag=${{ github.sha }} \
             --allow-unreleased 2>&1 | tee helm-diff-backend-dev.txt || true
 
-      - name: "Deploy backend → dev (--atomic)"
+      - name: "helm upgrade — backend → dev (--atomic 5m)"
         run: |
-          helm upgrade --install financeguard-backend-dev \
-            ${{ env.CHART_REPO }}/backend --version 0.1.${{ github.run_number }} \
+          helm upgrade --install financeguard-backend \
+            ${{ env.CHART_REPO }}/backend \
+            --version 0.1.${{ github.run_number }} \
             --namespace dev --create-namespace \
             -f helm/backend/values.yaml -f helm/backend/values-dev.yaml \
-            --set image.repository=${{ env.ECR_REGISTRY }}/financeguard-backend \
+            --set image.repository=${{ env.ECR_BACKEND }} \
             --set image.tag=${{ github.sha }} \
             --atomic --timeout=5m
 
-      - name: "helm diff – frontend"
+      - name: "helm diff — frontend (dev)"
         run: |
-          helm diff upgrade financeguard-frontend-dev \
-            ${{ env.CHART_REPO }}/frontend --version 0.1.${{ github.run_number }} \
+          helm diff upgrade financeguard-frontend \
+            ${{ env.CHART_REPO }}/frontend \
+            --version 0.1.${{ github.run_number }} \
+            --namespace dev \
             -f helm/frontend/values.yaml -f helm/frontend/values-dev.yaml \
-            --set image.repository=${{ env.ECR_REGISTRY }}/financeguard-frontend \
+            --set image.repository=${{ env.ECR_FRONTEND }} \
             --set image.tag=${{ github.sha }} \
             --allow-unreleased 2>&1 | tee helm-diff-frontend-dev.txt || true
 
-      - name: "Deploy frontend → dev (--atomic)"
+      - name: "helm upgrade — frontend → dev (--atomic 5m)"
         run: |
-          helm upgrade --install financeguard-frontend-dev \
-            ${{ env.CHART_REPO }}/frontend --version 0.1.${{ github.run_number }} \
+          helm upgrade --install financeguard-frontend \
+            ${{ env.CHART_REPO }}/frontend \
+            --version 0.1.${{ github.run_number }} \
             --namespace dev --create-namespace \
             -f helm/frontend/values.yaml -f helm/frontend/values-dev.yaml \
-            --set image.repository=${{ env.ECR_REGISTRY }}/financeguard-frontend \
+            --set image.repository=${{ env.ECR_FRONTEND }} \
             --set image.tag=${{ github.sha }} \
             --atomic --timeout=5m
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: helm-diff-dev-${{ github.sha }}
-          path: "helm-diff-*.txt"
+          name:           cosign-verify-dev-${{ github.sha }}
+          path:           cosign-verify-dev.txt
           retention-days: 30
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # STAGE 8a · Integration Tests (dev)
-  # ─────────────────────────────────────────────────────────────────────────────
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name:           helm-diff-dev-${{ github.sha }}
+          path:           "helm-diff-*-dev.txt"
+          retention-days: 30
+
   integration-test-dev:
-    name: "Stage 8 · Integration Tests (dev)"
+    name: "Stage 2 · Integration Tests (dev)"
     runs-on: ubuntu-latest
     needs: deploy-dev
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -687,7 +573,7 @@ jobs:
 
       - run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
 
-      - name: Get dev ALB hostname
+      - name: "Resolve dev ALB hostname"
         id: alb
         run: |
           HOST=$(kubectl get ingress -n dev \
@@ -696,13 +582,14 @@ jobs:
 
       - run: pip install requests pytest pytest-html
 
-      - name: Run integration tests
+      - name: "Integration tests vs live dev cluster"
         env:
           API_URL: ${{ steps.alb.outputs.url }}
         run: |
           pytest tests/integration/ \
             --junitxml=integration-results/junit.xml \
-            --html=integration-results/report.html -v
+            --html=integration-results/report.html \
+            -v
 
       - uses: dorny/test-reporter@v1
         if: always()
@@ -718,16 +605,8 @@ jobs:
           path:           integration-results/
           retention-days: 30
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # STAGE 8a-DAST · OWASP ZAP Baseline (dev)
-  #
-  # Passive scan — spider + passive rules, no active attack payloads.
-  # DEMO:       fail_action: false + continue-on-error — findings reported but
-  #             dev pipeline stays green. ZAP HTML report uploaded as artifact.
-  # PRODUCTION: set fail_action: true — HIGH findings should block promotion.
-  # ─────────────────────────────────────────────────────────────────────────────
   zap-dev:
-    name: "Stage 8 · DAST – ZAP Baseline (dev)"
+    name: "Stage 2 · DAST — ZAP Baseline (dev, report only)"
     runs-on: ubuntu-latest
     needs: integration-test-dev
     permissions:
@@ -743,103 +622,44 @@ jobs:
 
       - run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
 
-      - name: Get dev ALB hostname
+      - name: "Resolve dev ALB hostname"
         id: alb
         run: |
           HOST=$(kubectl get ingress -n dev \
             -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
           echo "target=http://$HOST" >> $GITHUB_OUTPUT
 
-      # PRODUCTION: set fail_action: true and remove continue-on-error
-      - name: "DAST – OWASP ZAP baseline scan"
+      # Dev ZAP is passive (spider + passive rules, no active attack payloads).
+      # Purpose: early visibility. The active scan that gates prod is in staging.
+      #
+      # DEMO: continue-on-error + fail_action: false — pipeline always continues.
+      # PRODUCTION: keep fail_action: false here (dev is observation-only).
+      # The staging full scan below is where fail_action: true should be set.
+      - name: "DAST — OWASP ZAP baseline (dev, passive)"
         uses: zaproxy/action-baseline@v0.12.0
         continue-on-error: true   # DEMO ONLY — remove for production
         with:
           target:        ${{ steps.alb.outputs.target }}
-          fail_action:   false    # DEMO ONLY — set to true in production
+          fail_action:   false    # dev = report only; hard gate is in staging
           artifact_name: zap-baseline-dev-${{ github.sha }}
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # STAGE 9a · Promote Image + Auto PR (dev → staging)
-  # ─────────────────────────────────────────────────────────────────────────────
-  promote-dev:
-    name: "Stage 9 · Promote + Open PR (dev→staging)"
+# ─────────────────────────────────────────────────────────────────────────────
+#  STAGE 3 · PROMOTE TO STAGING  (manual approval via GitHub Environments)
+#
+#  The `staging` Environment has required reviewers configured.
+#  Pipeline pauses until you click Approve in the GitHub Actions UI.
+#  The same commit SHA that passed dev is deployed to the staging namespace.
+#  No rebuild. Only the namespace + values overlay changes.
+#
+#  After deploy: full ZAP active scan (real attack payloads, last gate before prod).
+# ─────────────────────────────────────────────────────────────────────────────
+
+  deploy-staging:
+    name: "Stage 3 · Deploy → Staging (approval required ✋)"
     runs-on: ubuntu-latest
     needs: [ integration-test-dev, zap-dev ]
-    permissions:
-      pull-requests: write
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
-
-      - name: Retag backend → :dev-verified (manifest copy, no layer transfer)
-        run: |
-          MANIFEST=$(aws ecr batch-get-image --region ${{ env.AWS_REGION }} \
-            --repository-name financeguard-backend \
-            --image-ids imageTag=${{ github.sha }} \
-            --query 'images[0].imageManifest' --output text)
-          aws ecr put-image --region ${{ env.AWS_REGION }} \
-            --repository-name financeguard-backend \
-            --image-tag dev-verified-${{ github.sha }} \
-            --image-manifest "$MANIFEST"
-
-      - name: Retag frontend → :dev-verified
-        run: |
-          MANIFEST=$(aws ecr batch-get-image --region ${{ env.AWS_REGION }} \
-            --repository-name financeguard-frontend \
-            --image-ids imageTag=${{ github.sha }} \
-            --query 'images[0].imageManifest' --output text)
-          aws ecr put-image --region ${{ env.AWS_REGION }} \
-            --repository-name financeguard-frontend \
-            --image-tag dev-verified-${{ github.sha }} \
-            --image-manifest "$MANIFEST"
-
-      - name: Open promotion PR (development → staging)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          existing=$(gh pr list --base staging --head development --state open \
-            --json number --jq '.[0].number')
-          [ -n "$existing" ] && { echo "PR #$existing already open"; exit 0; }
-
-          gh pr create --base staging --head development \
-            --title "promote(dev→staging): ${{ github.sha }}" \
-            --body "## Automated promotion: dev → staging
-
-          | Stage | Status |
-          |---|---|
-          | Gitleaks secret scan | ✅ |
-          | Unit tests | ✅ |
-          | SonarCloud quality gate | ✅ |
-          | Semgrep SAST (PRIMARY) | ✅ |
-          | Bandit SAST + Safety CVE audit | ✅ |
-          | Trivy container scan | ✅ |
-          | SBOM (Syft/SPDX) | ✅ |
-          | Cosign image signing | ✅ |
-          | Dev deploy (helm upgrade --atomic) | ✅ |
-          | Integration tests (dev) | ✅ |
-          | OWASP ZAP baseline | ✅ |
-
-          **Promoted:** \`financeguard-backend:dev-verified-${{ github.sha }}\`
-          **Promoted:** \`financeguard-frontend:dev-verified-${{ github.sha }}\`
-
-          Merging triggers the staging pipeline."
-
-  # ─────────────────────────────────────────────────────────────────────────────
-  # STAGE 7b · Deploy to Staging  (staging branch only)
-  # ─────────────────────────────────────────────────────────────────────────────
-  deploy-staging:
-    name: "Stage 7 · Deploy to Staging"
-    runs-on: ubuntu-latest
-    needs: [ build-push, helm-package ]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
-    environment: staging
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: staging    # ← PAUSES HERE — Approve in GitHub Environments UI
     steps:
       - uses: actions/checkout@v4
 
@@ -853,83 +673,98 @@ jobs:
 
       - run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
 
+      # DEMO: continue-on-error keeps staging green without a valid signature.
+      # PRODUCTION: remove continue-on-error. An unsigned image MUST NOT deploy.
       - uses: sigstore/cosign-installer@v3
 
-      - name: "Verify image signatures (cosign)"
+      - name: "Cosign verify — backend + frontend"
         run: |
-          cosign verify \
-            --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-            ${{ env.ECR_REGISTRY }}/financeguard-backend:${{ github.sha }} \
-            2>&1 | tee cosign-verify.txt
+          {
+            echo "=== Backend ==="
+            cosign verify \
+              --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              ${{ env.ECR_BACKEND }}:${{ github.sha }}
+            echo "=== Frontend ==="
+            cosign verify \
+              --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              ${{ env.ECR_FRONTEND }}:${{ github.sha }}
+          } 2>&1 | tee cosign-verify-staging.txt
         continue-on-error: true   # DEMO ONLY — remove for production
 
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name:           cosign-verify-staging-${{ github.sha }}
-          path:           cosign-verify.txt
-          retention-days: 30
-
-      - name: Helm login to ECR OCI
+      - name: "Helm login to ECR OCI"
         run: |
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
             helm registry login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
       - run: helm plugin install https://github.com/databus23/helm-diff 2>/dev/null || true
 
-      - name: "helm diff – backend"
+      - name: "helm diff — backend (staging)"
         run: |
-          helm diff upgrade financeguard-backend-staging \
-            ${{ env.CHART_REPO }}/backend --version 0.1.${{ github.run_number }} \
+          helm diff upgrade financeguard-backend \
+            ${{ env.CHART_REPO }}/backend \
+            --version 0.1.${{ github.run_number }} \
+            --namespace staging \
             -f helm/backend/values.yaml -f helm/backend/values-staging.yaml \
-            --set image.repository=${{ env.ECR_REGISTRY }}/financeguard-backend \
+            --set image.repository=${{ env.ECR_BACKEND }} \
             --set image.tag=${{ github.sha }} \
             --allow-unreleased 2>&1 | tee helm-diff-backend-staging.txt || true
 
-      - name: "Deploy backend → staging (--atomic)"
+      - name: "helm upgrade — backend → staging (--atomic 5m)"
         run: |
-          helm upgrade --install financeguard-backend-staging \
-            ${{ env.CHART_REPO }}/backend --version 0.1.${{ github.run_number }} \
+          helm upgrade --install financeguard-backend \
+            ${{ env.CHART_REPO }}/backend \
+            --version 0.1.${{ github.run_number }} \
             --namespace staging --create-namespace \
             -f helm/backend/values.yaml -f helm/backend/values-staging.yaml \
-            --set image.repository=${{ env.ECR_REGISTRY }}/financeguard-backend \
-            --set image.tag=${{ github.sha }} --atomic --timeout=5m
+            --set image.repository=${{ env.ECR_BACKEND }} \
+            --set image.tag=${{ github.sha }} \
+            --atomic --timeout=5m
 
-      - name: "helm diff – frontend"
+      - name: "helm diff — frontend (staging)"
         run: |
-          helm diff upgrade financeguard-frontend-staging \
-            ${{ env.CHART_REPO }}/frontend --version 0.1.${{ github.run_number }} \
+          helm diff upgrade financeguard-frontend \
+            ${{ env.CHART_REPO }}/frontend \
+            --version 0.1.${{ github.run_number }} \
+            --namespace staging \
             -f helm/frontend/values.yaml -f helm/frontend/values-staging.yaml \
-            --set image.repository=${{ env.ECR_REGISTRY }}/financeguard-frontend \
+            --set image.repository=${{ env.ECR_FRONTEND }} \
             --set image.tag=${{ github.sha }} \
             --allow-unreleased 2>&1 | tee helm-diff-frontend-staging.txt || true
 
-      - name: "Deploy frontend → staging (--atomic)"
+      - name: "helm upgrade — frontend → staging (--atomic 5m)"
         run: |
-          helm upgrade --install financeguard-frontend-staging \
-            ${{ env.CHART_REPO }}/frontend --version 0.1.${{ github.run_number }} \
+          helm upgrade --install financeguard-frontend \
+            ${{ env.CHART_REPO }}/frontend \
+            --version 0.1.${{ github.run_number }} \
             --namespace staging --create-namespace \
             -f helm/frontend/values.yaml -f helm/frontend/values-staging.yaml \
-            --set image.repository=${{ env.ECR_REGISTRY }}/financeguard-frontend \
-            --set image.tag=${{ github.sha }} --atomic --timeout=5m
+            --set image.repository=${{ env.ECR_FRONTEND }} \
+            --set image.tag=${{ github.sha }} \
+            --atomic --timeout=5m
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: helm-diff-staging-${{ github.sha }}
-          path: "helm-diff-*.txt"
+          name:           cosign-verify-staging-${{ github.sha }}
+          path:           cosign-verify-staging.txt
           retention-days: 30
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # STAGE 8b · Integration Tests (staging)
-  # ─────────────────────────────────────────────────────────────────────────────
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name:           helm-diff-staging-${{ github.sha }}
+          path:           "helm-diff-*-staging.txt"
+          retention-days: 30
+
   integration-test-staging:
-    name: "Stage 8 · Integration Tests (staging)"
+    name: "Stage 3 · Integration Tests (staging)"
     runs-on: ubuntu-latest
     needs: deploy-staging
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -942,7 +777,7 @@ jobs:
 
       - run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
 
-      - name: Get staging ALB hostname
+      - name: "Resolve staging ALB hostname"
         id: alb
         run: |
           HOST=$(kubectl get ingress -n staging \
@@ -951,13 +786,14 @@ jobs:
 
       - run: pip install requests pytest pytest-html
 
-      - name: Run integration tests
+      - name: "Integration tests vs live staging cluster"
         env:
           API_URL: ${{ steps.alb.outputs.url }}
         run: |
           pytest tests/integration/ \
             --junitxml=integration-results/junit.xml \
-            --html=integration-results/report.html -v
+            --html=integration-results/report.html \
+            -v
 
       - uses: dorny/test-reporter@v1
         if: always()
@@ -973,20 +809,8 @@ jobs:
           path:           integration-results/
           retention-days: 30
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # STAGE 8b-DAST · OWASP ZAP Full Scan (staging)
-  #
-  # Active scan — includes injection, XSS, broken auth, CSRF attack payloads.
-  # May create test records in the database (acceptable in staging).
-  #
-  # DEMO:       continue-on-error — full scan runs, findings in artifact,
-  #             pipeline stays green for the demo.
-  # PRODUCTION: remove continue-on-error AND set fail_action: true.
-  #             HIGH findings MUST block promotion to prod — this is the
-  #             last gate before production-bound code.
-  # ─────────────────────────────────────────────────────────────────────────────
   zap-staging:
-    name: "Stage 8 · DAST – ZAP Full Scan (staging)"
+    name: "Stage 3 · DAST — ZAP Full Scan (staging, last gate before prod)"
     runs-on: ubuntu-latest
     needs: integration-test-staging
     permissions:
@@ -1002,15 +826,20 @@ jobs:
 
       - run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
 
-      - name: Get staging ALB hostname
+      - name: "Resolve staging ALB hostname"
         id: alb
         run: |
           HOST=$(kubectl get ingress -n staging \
             -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
           echo "target=http://$HOST" >> $GITHUB_OUTPUT
 
-      # PRODUCTION: set fail_action: true and remove continue-on-error
-      - name: "DAST – OWASP ZAP full scan"
+      # Full/active scan — real injection, XSS, broken auth payloads.
+      # This is the LAST security gate between staging and production.
+      #
+      # DEMO: continue-on-error + fail_action: false — pipeline stays green.
+      # PRODUCTION: remove continue-on-error AND set fail_action: true.
+      # Any HIGH ZAP finding here MUST block the production promotion.
+      - name: "DAST — OWASP ZAP full scan (staging, active)"
         uses: zaproxy/action-full-scan@v0.10.0
         continue-on-error: true   # DEMO ONLY — remove for production
         with:
@@ -1018,85 +847,23 @@ jobs:
           fail_action:   false    # DEMO ONLY — set to true in production
           artifact_name: zap-full-staging-${{ github.sha }}
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # STAGE 9b · Promote Image + Auto PR (staging → main)
-  # ─────────────────────────────────────────────────────────────────────────────
-  promote-staging:
-    name: "Stage 9 · Promote + Open PR (staging→main)"
+# ─────────────────────────────────────────────────────────────────────────────
+#  STAGE 4 · PRODUCTION APPROVAL GATE + DEPLOY
+#
+#  The `production` Environment requires manual approval.
+#  Pipeline pauses — click Approve in the GitHub Actions UI.
+#  GitHub records WHO approved and WHEN (audit trail).
+#
+#  The same commit SHA that passed all staging checks deploys to prod.
+#  Nothing is rebuilt. Cosign verifies the signed image from Stage 1.
+# ─────────────────────────────────────────────────────────────────────────────
+
+  deploy-prod:
+    name: "Stage 4 · Deploy → Production (approval required ✋)"
     runs-on: ubuntu-latest
     needs: [ integration-test-staging, zap-staging ]
-    permissions:
-      pull-requests: write
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
-
-      - name: Retag backend → :staging-verified
-        run: |
-          MANIFEST=$(aws ecr batch-get-image --region ${{ env.AWS_REGION }} \
-            --repository-name financeguard-backend \
-            --image-ids imageTag=${{ github.sha }} \
-            --query 'images[0].imageManifest' --output text)
-          aws ecr put-image --region ${{ env.AWS_REGION }} \
-            --repository-name financeguard-backend \
-            --image-tag staging-verified-${{ github.sha }} \
-            --image-manifest "$MANIFEST"
-
-      - name: Retag frontend → :staging-verified
-        run: |
-          MANIFEST=$(aws ecr batch-get-image --region ${{ env.AWS_REGION }} \
-            --repository-name financeguard-frontend \
-            --image-ids imageTag=${{ github.sha }} \
-            --query 'images[0].imageManifest' --output text)
-          aws ecr put-image --region ${{ env.AWS_REGION }} \
-            --repository-name financeguard-frontend \
-            --image-tag staging-verified-${{ github.sha }} \
-            --image-manifest "$MANIFEST"
-
-      - name: Open promotion PR (staging → main)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          existing=$(gh pr list --base main --head staging --state open \
-            --json number --jq '.[0].number')
-          [ -n "$existing" ] && { echo "PR #$existing already open"; exit 0; }
-
-          gh pr create --base main --head staging \
-            --title "promote(staging→prod): ${{ github.sha }}" \
-            --body "## Automated promotion: staging → production
-
-          All staging gates passed for \`${{ github.sha }}\`.
-
-          | Stage | Status |
-          |---|---|
-          | All security scans | ✅ (see Security tab) |
-          | Cosign signature | ✅ (verified on deploy) |
-          | Staging deploy (helm upgrade) | ✅ |
-          | Integration tests (staging) | ✅ |
-          | OWASP ZAP full scan | ✅ |
-
-          **Before merging:** stakeholder sign-off · rollback plan · change window
-
-          > Merging triggers \`deploy-prod\` which **pauses for manual approval**
-          > in GitHub Environments before touching production."
-
-  # ─────────────────────────────────────────────────────────────────────────────
-  # STAGE 7c · Deploy to Production  (main branch only)
-  # Pipeline pauses at GitHub Environments gate until you click Approve.
-  # --atomic auto-rolls back on timeout or crash-loop.
-  # ─────────────────────────────────────────────────────────────────────────────
-  deploy-prod:
-    name: "Stage 7 · Deploy to Production"
-    runs-on: ubuntu-latest
-    needs: [ build-push, helm-package ]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    environment: production    # ← PAUSES HERE — click Approve in GitHub UI
+    environment: production   # ← PAUSES HERE — Approve in GitHub Environments UI
     steps:
       - uses: actions/checkout@v4
 
@@ -1110,18 +877,95 @@ jobs:
 
       - run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
 
-      # Cosign verification in prod — no continue-on-error here even for demo.
-      # If the image has no signature it means the build pipeline was bypassed.
+      # DEMO: continue-on-error prevents hard failure on missing signature.
+      # PRODUCTION: remove continue-on-error. An unsigned image in production
+      # is a critical supply-chain integrity failure. MUST hard fail.
       - uses: sigstore/cosign-installer@v3
 
-      - name: "Verify image signatures before prod deploy"
+      - name: "Cosign verify — backend + frontend (pre-prod)"
         run: |
-          cosign verify \
-            --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-            ${{ env.ECR_REGISTRY }}/financeguard-backend:${{ github.sha }} \
-            2>&1 | tee cosign-verify-prod.txt
+          {
+            echo "=== Backend ==="
+            cosign verify \
+              --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              ${{ env.ECR_BACKEND }}:${{ github.sha }}
+            echo "=== Frontend ==="
+            cosign verify \
+              --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              ${{ env.ECR_FRONTEND }}:${{ github.sha }}
+          } 2>&1 | tee cosign-verify-prod.txt
         continue-on-error: true   # DEMO ONLY — remove for production
+
+      - name: "Helm login to ECR OCI"
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+            helm registry login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+
+      - run: helm plugin install https://github.com/databus23/helm-diff 2>/dev/null || true
+
+      - name: "helm diff — backend (production)"
+        run: |
+          helm diff upgrade financeguard-backend \
+            ${{ env.CHART_REPO }}/backend \
+            --version 0.1.${{ github.run_number }} \
+            --namespace prod \
+            -f helm/backend/values.yaml -f helm/backend/values-prod.yaml \
+            --set image.repository=${{ env.ECR_BACKEND }} \
+            --set image.tag=${{ github.sha }} \
+            --allow-unreleased 2>&1 | tee helm-diff-backend-prod.txt || true
+
+      - name: "helm upgrade — backend → production (--atomic 10m)"
+        run: |
+          helm upgrade --install financeguard-backend \
+            ${{ env.CHART_REPO }}/backend \
+            --version 0.1.${{ github.run_number }} \
+            --namespace prod --create-namespace \
+            -f helm/backend/values.yaml -f helm/backend/values-prod.yaml \
+            --set image.repository=${{ env.ECR_BACKEND }} \
+            --set image.tag=${{ github.sha }} \
+            --atomic --timeout=10m
+
+      - name: "helm diff — frontend (production)"
+        run: |
+          helm diff upgrade financeguard-frontend \
+            ${{ env.CHART_REPO }}/frontend \
+            --version 0.1.${{ github.run_number }} \
+            --namespace prod \
+            -f helm/frontend/values.yaml -f helm/frontend/values-prod.yaml \
+            --set image.repository=${{ env.ECR_FRONTEND }} \
+            --set image.tag=${{ github.sha }} \
+            --allow-unreleased 2>&1 | tee helm-diff-frontend-prod.txt || true
+
+      - name: "helm upgrade — frontend → production (--atomic 10m)"
+        run: |
+          helm upgrade --install financeguard-frontend \
+            ${{ env.CHART_REPO }}/frontend \
+            --version 0.1.${{ github.run_number }} \
+            --namespace prod --create-namespace \
+            -f helm/frontend/values.yaml -f helm/frontend/values-prod.yaml \
+            --set image.repository=${{ env.ECR_FRONTEND }} \
+            --set image.tag=${{ github.sha }} \
+            --atomic --timeout=10m
+
+      # ── Post-deployment smoke test ─────────────────────────────────────────
+      - name: "Post-deploy smoke test (2 min retry)"
+        run: |
+          HOST=$(kubectl get ingress -n prod \
+            -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
+          echo "Production: http://$HOST"
+          for i in $(seq 1 12); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://$HOST/health" || echo "000")
+            [ "$STATUS" = "200" ] && { echo "✅ /health → 200 (attempt $i)"; break; }
+            echo "⏳ attempt $i/12 → HTTP $STATUS"
+            sleep 10
+          done
+          [ "$STATUS" = "200" ] || { echo "❌ Smoke test timed out after 2 minutes"; exit 1; }
+
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://$HOST/api/v1/transactions" || echo "000")
+          [ "$STATUS" = "200" ] || { echo "❌ /api/v1/transactions → HTTP $STATUS"; exit 1; }
+          echo "✅ Production healthy — /health and /api/v1/transactions both 200"
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -1130,66 +974,43 @@ jobs:
           path:           cosign-verify-prod.txt
           retention-days: 90
 
-      - name: Helm login to ECR OCI
-        run: |
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
-            helm registry login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
-
-      - run: helm plugin install https://github.com/databus23/helm-diff 2>/dev/null || true
-
-      - name: "helm diff – backend (review before applying)"
-        run: |
-          helm diff upgrade financeguard-backend-prod \
-            ${{ env.CHART_REPO }}/backend --version 0.1.${{ github.run_number }} \
-            -f helm/backend/values.yaml -f helm/backend/values-prod.yaml \
-            --set image.repository=${{ env.ECR_REGISTRY }}/financeguard-backend \
-            --set image.tag=${{ github.sha }} \
-            --allow-unreleased 2>&1 | tee helm-diff-backend-prod.txt || true
-
-      - name: "Deploy backend → production (--atomic, 10m)"
-        run: |
-          helm upgrade --install financeguard-backend-prod \
-            ${{ env.CHART_REPO }}/backend --version 0.1.${{ github.run_number }} \
-            --namespace prod --create-namespace \
-            -f helm/backend/values.yaml -f helm/backend/values-prod.yaml \
-            --set image.repository=${{ env.ECR_REGISTRY }}/financeguard-backend \
-            --set image.tag=${{ github.sha }} --atomic --timeout=10m
-
-      - name: "helm diff – frontend"
-        run: |
-          helm diff upgrade financeguard-frontend-prod \
-            ${{ env.CHART_REPO }}/frontend --version 0.1.${{ github.run_number }} \
-            -f helm/frontend/values.yaml -f helm/frontend/values-prod.yaml \
-            --set image.repository=${{ env.ECR_REGISTRY }}/financeguard-frontend \
-            --set image.tag=${{ github.sha }} \
-            --allow-unreleased 2>&1 | tee helm-diff-frontend-prod.txt || true
-
-      - name: "Deploy frontend → production (--atomic)"
-        run: |
-          helm upgrade --install financeguard-frontend-prod \
-            ${{ env.CHART_REPO }}/frontend --version 0.1.${{ github.run_number }} \
-            --namespace prod --create-namespace \
-            -f helm/frontend/values.yaml -f helm/frontend/values-prod.yaml \
-            --set image.repository=${{ env.ECR_REGISTRY }}/financeguard-frontend \
-            --set image.tag=${{ github.sha }} --atomic --timeout=10m
-
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: helm-diff-prod-${{ github.sha }}
-          path: "helm-diff-*.txt"
+          name:           helm-diff-prod-${{ github.sha }}
+          path:           "helm-diff-*-prod.txt"
           retention-days: 90
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # STAGE 8c · Smoke Test + :stable retag + Evidence Bundle + GitHub Release
-  #
-  # Evidence bundle aggregates ALL pipeline artifacts into a single download
-  # with a manifest.json — ready for submission / audit.
-  # ─────────────────────────────────────────────────────────────────────────────
-  release:
-    name: "Stage 8 · Smoke Test, Evidence & Release"
+# ─────────────────────────────────────────────────────────────────────────────
+#  STAGE 5 · EVIDENCE BUNDLE + GITHUB RELEASE
+#
+#  Aggregates ALL pipeline artifacts into a single downloadable bundle.
+#  Retained 90 days. Use for capstone submission / audit trail.
+#
+#  Bundle layout:
+#    evidence/
+#    ├── manifest.json                    pipeline metadata + tool inventory
+#    ├── security/                        Semgrep SARIF, Trivy SARIFs
+#    ├── tests/
+#    │   ├── unit/                        JUnit XML, coverage XML + HTML
+#    │   ├── integration-dev/
+#    │   └── integration-staging/
+#    ├── sbom/                            backend + frontend SPDX JSON
+#    ├── signatures/                      cosign verify output (dev/staging/prod)
+#    └── deployment/
+#        ├── helm-diff-dev/               exact K8s changes per environment
+#        ├── helm-diff-staging/
+#        ├── helm-diff-prod/
+#        ├── helm-history-backend.txt
+#        ├── helm-history-frontend.txt
+#        └── charts/                      packaged Helm .tgz files
+# ─────────────────────────────────────────────────────────────────────────────
+
+  evidence-release:
+    name: "Stage 5 · Evidence Bundle + Release"
     runs-on: ubuntu-latest
     needs: deploy-prod
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
     steps:
@@ -1203,118 +1024,98 @@ jobs:
 
       - run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
 
-      - name: Production smoke test
-        run: |
-          HOST=$(kubectl get ingress -n prod \
-            -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
-          echo "Production: http://$HOST"
-          for i in $(seq 1 12); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://$HOST/health" || echo "000")
-            [ "$STATUS" = "200" ] && { echo "✅ /health → 200"; break; }
-            echo "⏳ $i/12 → $STATUS, retrying..."
-            sleep 10
-          done
-          [ "$STATUS" = "200" ] || { echo "❌ Smoke test failed"; exit 1; }
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://$HOST/api/v1/transactions" || echo "000")
-          [ "$STATUS" = "200" ] || { echo "❌ API check failed ($STATUS)"; exit 1; }
-          echo "✅ All smoke tests passed"
+      - name: "Download all pipeline artifacts"
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
 
-      - name: Retag backend → :stable
+      - name: "Assemble evidence bundle"
+        run: |
+          mkdir -p evidence/{security,tests/{unit,integration-dev,integration-staging},sbom,signatures,deployment/{helm-diff-dev,helm-diff-staging,helm-diff-prod,charts}}
+
+          cp -r artifacts/pr-semgrep-*/              evidence/security/                   2>/dev/null || true
+          cp -r artifacts/trivy-sarif-*/             evidence/security/                   2>/dev/null || true
+          cp -r artifacts/pr-test-results-*/         evidence/tests/unit/                 2>/dev/null || true
+          cp -r artifacts/integration-results-dev-*/ evidence/tests/integration-dev/     2>/dev/null || true
+          cp -r artifacts/integration-results-staging-*/ evidence/tests/integration-staging/ 2>/dev/null || true
+          find artifacts/ -name "*.spdx.json"        -exec cp {} evidence/sbom/ \;       2>/dev/null || true
+          cp -r artifacts/cosign-verify-dev-*/       evidence/signatures/                 2>/dev/null || true
+          cp -r artifacts/cosign-verify-staging-*/   evidence/signatures/                 2>/dev/null || true
+          cp -r artifacts/cosign-verify-prod-*/      evidence/signatures/                 2>/dev/null || true
+          cp -r artifacts/helm-diff-dev-*/           evidence/deployment/helm-diff-dev/   2>/dev/null || true
+          cp -r artifacts/helm-diff-staging-*/       evidence/deployment/helm-diff-staging/ 2>/dev/null || true
+          cp -r artifacts/helm-diff-prod-*/          evidence/deployment/helm-diff-prod/  2>/dev/null || true
+          cp -r artifacts/helm-charts-*/             evidence/deployment/charts/           2>/dev/null || true
+
+          helm history financeguard-backend  -n prod --max 10 --output table \
+            > evidence/deployment/helm-history-backend.txt  2>/dev/null || true
+          helm history financeguard-frontend -n prod --max 10 --output table \
+            > evidence/deployment/helm-history-frontend.txt 2>/dev/null || true
+
+          cat > evidence/manifest.json << EOF
+          {
+            "project":       "FinanceGuard DevSecOps Capstone",
+            "model":         "Trunk-Based Development (Model B)",
+            "version":       "v0.1.${{ github.run_number }}",
+            "commit":        "${{ github.sha }}",
+            "branch":        "main",
+            "actor":         "${{ github.actor }}",
+            "pipeline_url":  "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "security_toolchain": {
+              "secret_scan":        "Gitleaks — full git history, every PR",
+              "sast_primary":       "Semgrep — OWASP Top-10 + secrets + security-audit",
+              "iac_scan":           "Checkov + TFLint — Terraform misconfigs + provider rules",
+              "code_quality":       "SonarCloud — coverage, hotspots, quality rating",
+              "container_scan":     "Trivy — CRITICAL/HIGH fixable CVEs (OS + libraries)",
+              "sbom":               "Syft — SPDX 2.3 JSON for each image",
+              "image_signing":      "Cosign OIDC keyless — Sigstore Fulcio/Rekor transparency log",
+              "dast_dev":           "OWASP ZAP baseline — passive, report only",
+              "dast_staging":       "OWASP ZAP full scan — active attack payloads, last gate",
+              "policy_as_code":     "Kyverno ClusterPolicies — non-root, resource limits, ECR-only registry",
+              "runtime_detection":  "Falco eBPF — shell-in-container, unexpected outbound, sensitive files",
+              "secrets_management": "AWS Secrets Manager + External Secrets Operator (IRSA)"
+            },
+            "environments": {
+              "dev":        "auto-deploy after build passes (namespace: dev)",
+              "staging":    "manual approval via GitHub Environments (namespace: staging)",
+              "production": "manual approval via GitHub Environments (namespace: prod)"
+            },
+            "demo_note": "All security scans run with continue-on-error: true for demo. In production, remove this flag to enforce hard gates on CRITICAL/HIGH findings."
+          }
+          EOF
+
+          echo "── Evidence bundle ──"
+          find evidence/ -type f | sort
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name:           "EVIDENCE-BUNDLE-v0.1.${{ github.run_number }}-${{ github.sha }}"
+          path:           evidence/
+          retention-days: 90
+
+      # ── :stable tag ────────────────────────────────────────────────────────
+      - name: "Retag backend → :stable"
         run: |
           M=$(aws ecr batch-get-image --region ${{ env.AWS_REGION }} \
             --repository-name financeguard-backend \
             --image-ids imageTag=${{ github.sha }} \
             --query 'images[0].imageManifest' --output text)
           aws ecr put-image --region ${{ env.AWS_REGION }} \
-            --repository-name financeguard-backend --image-tag stable --image-manifest "$M"
+            --repository-name financeguard-backend --image-tag stable \
+            --image-manifest "$M"
 
-      - name: Retag frontend → :stable
+      - name: "Retag frontend → :stable"
         run: |
           M=$(aws ecr batch-get-image --region ${{ env.AWS_REGION }} \
             --repository-name financeguard-frontend \
             --image-ids imageTag=${{ github.sha }} \
             --query 'images[0].imageManifest' --output text)
           aws ecr put-image --region ${{ env.AWS_REGION }} \
-            --repository-name financeguard-frontend --image-tag stable --image-manifest "$M"
+            --repository-name financeguard-frontend --image-tag stable \
+            --image-manifest "$M"
 
-      # ── Evidence Bundle ───────────────────────────────────────────────────────
-      # Aggregates all CI artifacts into a single downloadable bundle with a
-      # manifest.json. Retained 90 days. Suitable for submission / audit trail.
-      - name: Download all pipeline artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: evidence-raw/
-
-      - name: Build evidence bundle + manifest
-        run: |
-          mkdir -p evidence-bundle/{security,tests,deployment,sbom,signatures}
-
-          # Security scan outputs
-          cp -r evidence-raw/security-reports-*/    evidence-bundle/security/       2>/dev/null || true
-          cp -r evidence-raw/cosign-verify-prod-*/  evidence-bundle/signatures/     2>/dev/null || true
-
-          # Test results
-          cp -r evidence-raw/test-results-*/        evidence-bundle/tests/unit/     2>/dev/null || true
-          cp -r evidence-raw/integration-results-staging-*/ \
-                                                    evidence-bundle/tests/integration/ 2>/dev/null || true
-
-          # Deployment artifacts
-          cp -r evidence-raw/helm-diff-prod-*/      evidence-bundle/deployment/     2>/dev/null || true
-          cp -r evidence-raw/helm-charts-*/         evidence-bundle/deployment/charts/ 2>/dev/null || true
-
-          # SBOMs (uploaded directly by anchore/sbom-action)
-          find evidence-raw/ -name "*.spdx.json" -exec cp {} evidence-bundle/sbom/ \; 2>/dev/null || true
-
-          # Helm deployment history
-          helm history financeguard-backend-prod  -n prod --max 10 \
-            --output table > evidence-bundle/deployment/helm-history-backend.txt  2>/dev/null || true
-          helm history financeguard-frontend-prod -n prod --max 10 \
-            --output table > evidence-bundle/deployment/helm-history-frontend.txt 2>/dev/null || true
-
-          # Manifest
-          cat > evidence-bundle/manifest.json << EOF
-          {
-            "project":      "FinanceGuard DevSecOps Capstone",
-            "version":      "v0.1.${{ github.run_number }}",
-            "commit":       "${{ github.sha }}",
-            "branch":       "main",
-            "actor":        "${{ github.actor }}",
-            "timestamp":    "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "pipeline_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
-            "security_tools": {
-              "secret_scan":        "Gitleaks (full git history)",
-              "sast_primary":       "Semgrep (OWASP Top-10 + secrets + security-audit)",
-              "sast_secondary":     "Bandit (Python)",
-              "dependency_audit":   "Safety (CVE check)",
-              "iac_scan":           "Checkov + TFLint (Terraform)",
-              "container_scan":     "Trivy (CRITICAL/HIGH fixable CVEs)",
-              "sbom":               "Syft SPDX format",
-              "image_signing":      "Cosign OIDC keyless (Sigstore)",
-              "dast_baseline":      "OWASP ZAP baseline (dev)",
-              "dast_full":          "OWASP ZAP full scan (staging)",
-              "code_quality":       "SonarCloud quality gate",
-              "policy_as_code":     "Kyverno ClusterPolicies (cluster-side)"
-            },
-            "note": "Security scans run with continue-on-error for demo. In production, remove continue-on-error on all scan steps to enforce hard gates."
-          }
-          EOF
-
-          echo "── Evidence bundle contents ──"
-          find evidence-bundle/ -type f | sort
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name:           "EVIDENCE-BUNDLE-v0.1.${{ github.run_number }}-${{ github.sha }}"
-          path:           evidence-bundle/
-          retention-days: 90
-
-      # ── GitHub Release ────────────────────────────────────────────────────────
-      - uses: actions/download-artifact@v4
-        with:
-          name: helm-charts-${{ github.sha }}
-          path: dist/charts/
-
-      - name: Create GitHub Release
+      # ── GitHub Release ─────────────────────────────────────────────────────
+      - name: "Create GitHub Release"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -1323,41 +1124,46 @@ jobs:
             --notes "## FinanceGuard v0.1.${{ github.run_number }}
 
           **Commit:** \`${{ github.sha }}\`
-
-          ### Security gates
-          | Tool | Purpose | Mode |
-          |---|---|---|
-          | Gitleaks | Secret scanning | demo: warn |
-          | Semgrep | SAST (OWASP Top-10) | demo: warn |
-          | Bandit | Python SAST | demo: warn |
-          | Safety | Dependency CVE audit | demo: warn |
-          | Trivy | Container scan CRITICAL/HIGH | demo: warn |
-          | Syft | SBOM (SPDX) | artifact generated |
-          | Cosign | Image signing (OIDC keyless) | demo: warn |
-          | Checkov + TFLint | IaC scan | demo: warn |
-          | OWASP ZAP | DAST baseline+full | demo: warn |
-          | SonarCloud | Quality gate | demo: warn |
-          | Kyverno | Policy-as-Code (cluster) | enforce |
+          **Pipeline:** [Run #${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          **Model:** Trunk-Based Development — single \`main\` branch
 
           ### Images
-          \`financeguard-backend:${{ github.sha }}\` · \`stable\`
-          \`financeguard-frontend:${{ github.sha }}\` · \`stable\`
+          \`\`\`
+          ${{ env.ECR_BACKEND }}:${{ github.sha }}   (also :stable)
+          ${{ env.ECR_FRONTEND }}:${{ github.sha }}  (also :stable)
+          \`\`\`
 
-          📦 Evidence bundle: download artifact \`EVIDENCE-BUNDLE-v0.1.${{ github.run_number }}\`
-          " \
-            dist/charts/*.tgz
+          ### Security toolchain
+          | Tool | Purpose | Mode |
+          |---|---|---|
+          | Gitleaks | Secrets in git history | demo: warn |
+          | Semgrep | OWASP Top-10 SAST (PR gate) | demo: warn |
+          | Checkov + TFLint | IaC misconfigs (PR gate) | demo: warn |
+          | SonarCloud | Code quality gate (PR gate) | demo: warn |
+          | Trivy | CRITICAL/HIGH CVEs in images | demo: warn |
+          | Syft | SBOM (SPDX 2.3 format) | artifact |
+          | Cosign | OIDC keyless sign + verify | demo: warn |
+          | ZAP baseline | Passive DAST (dev) | report only |
+          | ZAP full scan | Active DAST (staging) | demo: warn |
+          | Kyverno | Policy-as-Code on cluster | enforce |
+          | Falco | Runtime threat detection | enforce |
+          | ESO | Secrets from AWS SM | active |
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # NOTIFY · Slack alert on production deployment failure
-  # ─────────────────────────────────────────────────────────────────────────────
-  notify-prod-failure:
-    name: "Notify · Production Failure Alert"
+          📦 Download **EVIDENCE-BUNDLE-v0.1.${{ github.run_number }}** for submission." \
+            artifacts/helm-charts-${{ github.sha }}/*.tgz
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  NOTIFY · Slack alert on production failure
+# ─────────────────────────────────────────────────────────────────────────────
+
+  notify-failure:
+    name: "Notify · Production Failure"
     runs-on: ubuntu-latest
-    needs: [ deploy-prod, release ]
+    needs: [ deploy-prod, evidence-release ]
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
-      (needs.deploy-prod.result == 'failure' || needs.release.result == 'failure')
+      (needs.deploy-prod.result == 'failure' || needs.evidence-release.result == 'failure')
     steps:
       - uses: slackapi/slack-github-action@v1.26.0
         with:
@@ -1367,9 +1173,11 @@ jobs:
               "attachments": [{
                 "color": "danger",
                 "fields": [
+                  {"title": "Version", "value": "v0.1.${{ github.run_number }}", "short": true},
                   {"title": "Commit",  "value": "${{ github.sha }}", "short": true},
                   {"title": "Actor",   "value": "${{ github.actor }}", "short": true},
-                  {"title": "Result",  "value": "deploy-prod=${{ needs.deploy-prod.result }}  release=${{ needs.release.result }}", "short": false},
+                  {"title": "deploy-prod",      "value": "${{ needs.deploy-prod.result }}", "short": true},
+                  {"title": "evidence-release", "value": "${{ needs.evidence-release.result }}", "short": true},
                   {"title": "Run URL", "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false}
                 ]
               }]
@@ -1377,4 +1185,4 @@ jobs:
         env:
           SLACK_WEBHOOK_URL:  ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
-        continue-on-error: true   # don't fail the job if Slack isn't configured
+        continue-on-error: true   # don't fail if Slack isn't configured yet

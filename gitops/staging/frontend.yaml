@@ -7,7 +7,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/timkamba2002/financeguard-devsecops-capstone.git
-    targetRevision: staging
+    targetRevision: main    # trunk-based: all environments track main
     path: helm/frontend
     helm:
       valueFiles:

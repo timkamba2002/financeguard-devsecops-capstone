@@ -1,155 +1,139 @@
-# Branch Protection Rules — FinanceGuard
+# Branch Protection & GitHub Environments Setup
 
-Configure these rules in **GitHub → Settings → Branches** for each protected branch.
+Trunk-based development (Model B) — single `main` branch, short-lived feature branches.
 
 ---
 
-## `main` (Production)
+## Branch protection: `main`
 
-This is your production branch. Every merge here triggers the `deploy-prod` job which
-requires manual approval via GitHub Environments. The branch protection rules enforce
-that _only code that has passed the full CI pipeline_ can merge.
+Everything merges here. The branch protection rules make `main` the last line of defence before code reaches any environment.
 
-### Settings to enable
+### Settings (GitHub → Settings → Branches → Add rule → `main`)
 
 | Setting | Value | Why |
 |---|---|---|
-| **Require a pull request before merging** | ✅ | No direct pushes to prod |
-| **Required approvals** | 1 | At minimum one human review |
-| **Dismiss stale pull request approvals when new commits are pushed** | ✅ | Re-review after force-push/amend |
-| **Require review from Code Owners** | ✅ (if CODEOWNERS file exists) | Domain-specific review |
-| **Require status checks to pass before merging** | ✅ | CI must be green |
-| **Require branches to be up to date before merging** | ✅ | Prevents "works on my machine" merges |
+| **Require a pull request before merging** | ✅ | No direct pushes — everything goes through PR Validation |
+| **Required approvals** | 1 | At least one human review |
+| **Dismiss stale reviews when new commits are pushed** | ✅ | Re-approval required after changes |
+| **Require status checks to pass before merging** | ✅ | All PR Validation jobs must be green |
+| **Require branches to be up to date before merging** | ✅ | Prevents "works locally but fails after merge" |
 | **Require conversation resolution before merging** | ✅ | No unresolved review threads |
-| **Require signed commits** | ✅ | Cosign signs images; also sign commits |
 | **Do not allow bypassing the above settings** | ✅ | Admins can't bypass either |
-| **Allow force pushes** | ❌ | Never rewrite production history |
-| **Allow deletions** | ❌ | Never delete the production branch |
+| **Allow force pushes** | ❌ | Never rewrite `main` history |
+| **Allow deletions** | ❌ | `main` cannot be deleted |
 
 ### Required status checks for `main`
 
-Add these as required checks (the exact job names from `ci-cd.yml`):
+Add these in the branch protection rule. GitHub only shows checks that have run at least once — trigger a PR first, then configure.
 
 ```
-secret-scan
-build
-test
-sonarcloud
-security-scan
-build-push
-helm-package
+pr-secret-scan
+pr-sast
+pr-iac-scan
+pr-test
 ```
 
-> The `deploy-prod` job itself is NOT a required status check — it only runs after
-> merge and requires manual approval. The checks above verify the code is safe BEFORE
-> the PR can merge.
+> `pr-sonarcloud` is optional — add it once SONAR_TOKEN is confirmed working.
+> The deploy jobs (`deploy-dev`, `deploy-staging`, `deploy-prod`) are NOT listed here —
+> they run after merge, not as PR gates.
 
----
-
-## `staging`
-
-Staging represents code that passed dev integration tests and ZAP baseline. The same
-discipline applies, slightly relaxed approval threshold.
-
-### Settings to enable
-
-| Setting | Value |
-|---|---|
-| **Require a pull request before merging** | ✅ |
-| **Required approvals** | 1 |
-| **Dismiss stale approvals when new commits are pushed** | ✅ |
-| **Require status checks to pass before merging** | ✅ |
-| **Require branches to be up to date** | ✅ |
-| **Require conversation resolution** | ✅ |
-| **Allow force pushes** | ❌ |
-| **Allow deletions** | ❌ |
-
-### Required status checks for `staging`
-
-```
-secret-scan
-build
-test
-security-scan
-build-push
-helm-package
-```
-
----
-
-## `development`
-
-Open for developer commits; looser rules so the team can iterate fast.
-
-| Setting | Value |
-|---|---|
-| **Require a pull request before merging** | ✅ (at least for feature branches) |
-| **Required approvals** | 0 (self-merge allowed for solo project) |
-| **Require status checks to pass before merging** | ✅ |
-| **Allow force pushes** | Only for repository admins |
-
-### Required status checks for `development`
-
-```
-secret-scan
-build
-test
-```
-
----
-
-## Setting this up via GitHub CLI
+### Set up via GitHub CLI (run once after first PR runs)
 
 ```bash
-# main — strict production rules
 gh api repos/timkamba2002/financeguard-devsecops-capstone/branches/main/protection \
   --method PUT \
-  --field required_status_checks='{"strict":true,"contexts":["secret-scan","build","test","sonarcloud","security-scan","build-push","helm-package"]}' \
+  --field 'required_status_checks={"strict":true,"contexts":["pr-secret-scan","pr-sast","pr-iac-scan","pr-test"]}' \
   --field enforce_admins=true \
-  --field required_pull_request_reviews='{"required_approving_review_count":1,"dismiss_stale_reviews":true}' \
+  --field 'required_pull_request_reviews={"required_approving_review_count":1,"dismiss_stale_reviews":true}' \
   --field restrictions=null \
   --field allow_force_pushes=false \
   --field allow_deletions=false \
   --field required_conversation_resolution=true
-
-# staging
-gh api repos/timkamba2002/financeguard-devsecops-capstone/branches/staging/protection \
-  --method PUT \
-  --field required_status_checks='{"strict":true,"contexts":["secret-scan","build","test","security-scan","build-push","helm-package"]}' \
-  --field enforce_admins=true \
-  --field required_pull_request_reviews='{"required_approving_review_count":1,"dismiss_stale_reviews":true}' \
-  --field restrictions=null \
-  --field allow_force_pushes=false \
-  --field allow_deletions=false
-
-# development
-gh api repos/timkamba2002/financeguard-devsecops-capstone/branches/development/protection \
-  --method PUT \
-  --field required_status_checks='{"strict":true,"contexts":["secret-scan","build","test"]}' \
-  --field enforce_admins=false \
-  --field required_pull_request_reviews=null \
-  --field restrictions=null \
-  --field allow_force_pushes=false \
-  --field allow_deletions=false
 ```
-
-> Run these once after the initial CI run creates the status check names. GitHub only
-> lists checks that have run at least once in the branch protection dropdown.
 
 ---
 
-## GitHub Environments (production approval gate)
+## Feature branch convention
 
-Set up the `production` environment for the manual approval gate:
+| Prefix | Use |
+|---|---|
+| `feature/` | New functionality |
+| `fix/` | Bug fixes |
+| `chore/` | Dependency bumps, tooling, docs |
+| `security/` | Security patches |
 
-1. Go to **Settings → Environments → New environment → `production`**
-2. Enable **Required reviewers**: add yourself (or the team lead)
-3. Set **Wait timer**: 0 minutes (immediate after approval)
-4. Under **Deployment branches**: restrict to `main` only
-5. Add environment secrets if you want per-environment AWS credentials
+Branch from `main`, PR to `main`, delete after merge. Keep branches short-lived (days, not weeks). This avoids merge conflicts and keeps the diff reviewable.
 
-The `deploy-prod` job in `ci-cd.yml` already references `environment: production` —
-it will pause until you click **Approve** in the Actions UI.
+---
 
-Set up `staging` and `dev` environments similarly (no required reviewers needed unless
-desired).
+## GitHub Environments (promotion gates)
+
+These are the approval gates that control which commit SHA reaches each environment.
+
+### Setup: `dev` (auto-deploy)
+
+1. Go to **Settings → Environments → New environment → `dev`**
+2. Leave **Required reviewers** empty (auto-deploy)
+3. **Deployment branches**: restrict to `main` only
+4. No wait timer
+
+### Setup: `staging` (manual approval)
+
+1. **Settings → Environments → New environment → `staging`**
+2. **Required reviewers**: add yourself (or team lead)
+3. **Deployment branches**: restrict to `main` only
+4. Wait timer: 0 (optional — add a short delay if you want thinking time)
+
+### Setup: `production` (manual approval)
+
+1. **Settings → Environments → New environment → `production`**
+2. **Required reviewers**: add yourself
+3. **Deployment branches**: restrict to `main` only
+4. **Environment secrets** (optional): per-environment AWS credentials if different from repo secrets
+
+### How the approval gate works
+
+When a commit is pushed to `main` the pipeline runs automatically through:
+1. `build-sign-push` → completes automatically
+2. `deploy-dev` → completes automatically (`dev` has no reviewers)
+3. `deploy-staging` → **PAUSES** — you see a yellow "Waiting for review" banner in the Actions run. Click **Review deployments → staging → Approve**.
+4. `deploy-prod` → **PAUSES** — same flow. Click **Review deployments → production → Approve**.
+
+GitHub records who approved, when, and what commit SHA was deployed — this is your audit trail.
+
+---
+
+## Secrets required
+
+| Secret | Where to add | Notes |
+|---|---|---|
+| `AWS_ACCESS_KEY_ID` | Repo → Settings → Secrets | Already added |
+| `AWS_SECRET_ACCESS_KEY` | Repo → Settings → Secrets | Already added |
+| `SONAR_TOKEN` | Repo → Settings → Secrets | Already added |
+| `SLACK_WEBHOOK_URL` | Repo → Settings → Secrets | Already added |
+| `GITLEAKS_LICENSE` | Repo → Settings → Secrets | Optional — free tier works without it |
+
+No secrets needed for Cosign — it uses the GitHub Actions OIDC token automatically.
+
+---
+
+## Observability, Policy-as-Code, Runtime Security
+
+These run on the cluster, not in CI. Apply them once after EKS is provisioned:
+
+```bash
+# Kyverno (policy-as-code: non-root, resource limits, ECR-only registry)
+bash k8s/kyverno/install.sh
+
+# External Secrets Operator + AWS Secrets Manager
+kubectl apply -f k8s/external-secrets/
+
+# Falco (runtime threat detection)
+helm install falco falcosecurity/falco -n falco --create-namespace \
+  -f k8s/falco/values.yaml
+
+# Observability stack (Prometheus + Grafana + Loki + Tempo + OTel Collector)
+bash k8s/observability/install.sh
+```
+
+See the respective directories for detailed setup instructions.

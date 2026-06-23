@@ -20,15 +20,16 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: financeguard-db-secret
           env:
-            - name: ENVIRONMENT
-              value: {{ .Values.env.ENVIRONMENT | quote }}
             - name: SKIP_AUTH_VERIFICATION
-              value: {{ .Values.env.SKIP_AUTH_VERIFICATION | quote }}
+              value: "true"
           resources:
             limits:
-              cpu: {{ .Values.resources.limits.cpu }}
-              memory: {{ .Values.resources.limits.memory }}
+              cpu: 500m
+              memory: 512Mi
             requests:
-              cpu: {{ .Values.resources.requests.cpu }}
-              memory: {{ .Values.resources.requests.memory }}
+              cpu: 200m
+              memory: 256Mi

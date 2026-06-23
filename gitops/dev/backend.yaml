@@ -9,11 +9,6 @@ spec:
     repoURL: https://github.com/timkamba2002/financeguard-devsecops-capstone.git
     targetRevision: HEAD
     path: helm/backend
-    helm:
-      values: |
-        image:
-          repository: 866934333672.dkr.ecr.us-east-1.amazonaws.com/financeguard-backend
-          tag: "latest"
   destination:
     server: https://kubernetes.default.svc
     namespace: dev

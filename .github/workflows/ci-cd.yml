@@ -6,24 +6,27 @@ on:
   pull_request:
     branches: [ main, staging, development ]
 
+env:
+  AWS_REGION:   us-east-1
+  ECR_REGISTRY: 866934333672.dkr.ecr.us-east-1.amazonaws.com
+  EKS_CLUSTER:  financeguard-eks-dev
+
 jobs:
+
+  # ─── 1. Backend tests & lint ───────────────────────────────────────────────
   python-test:
     name: Backend Test & Lint
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
 
       - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r app/backend/requirements.txt
+        run: pip install -r app/backend/requirements.txt
 
       - name: Lint with Black
         run: |
@@ -31,64 +34,60 @@ jobs:
           black --check app/backend/
 
       - name: Run Pytest
-        run: |
-          pytest app/backend/tests/
+        run: pytest app/backend/tests/
 
+  # ─── 2. Dockerfile lint + image build + Trivy scan ────────────────────────
   docker-scan:
     name: Docker Build & Vulnerability Scan
     runs-on: ubuntu-latest
     needs: python-test
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Lint Frontend Dockerfile
-        uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: app/frontend/Dockerfile
+      - uses: actions/checkout@v4
 
       - name: Lint Backend Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: app/backend/Dockerfile
 
+      - name: Lint Frontend Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: app/frontend/Dockerfile
+
       - name: Build Backend Image
-        run: |
-          docker build -t financeguard-backend:local ./app/backend
+        run: docker build -t financeguard-backend:scan ./app/backend
 
       - name: Build Frontend Image
-        run: |
-          docker build -t financeguard-frontend:local ./app/frontend
+        run: docker build -t financeguard-frontend:scan ./app/frontend
 
-      - name: Scan Backend Container with Trivy
+      - name: Scan Backend with Trivy
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: "financeguard-backend:local"
-          format: "table"
-          exit-code: "1" # Fail build on vulnerabilities
-          ignore-unfixed: true
-          vuln-type: "os,library"
-          severity: "CRITICAL,HIGH"
-
-      - name: Scan Frontend Container with Trivy
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: "financeguard-frontend:local"
-          format: "table"
+          image-ref: financeguard-backend:scan
+          format: table
           exit-code: "1"
           ignore-unfixed: true
-          vuln-type: "os,library"
-          severity: "CRITICAL,HIGH"
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
 
+      - name: Scan Frontend with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: financeguard-frontend:scan
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+  # ─── 3. Terraform format check + Checkov IaC scan ─────────────────────────
   terraform-check:
     name: Terraform Check & Security Scan
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.5.0"
 
@@ -101,9 +100,92 @@ jobs:
         working-directory: ./terraform
 
       - name: IaC Security Scan (Checkov)
-        name: Run Checkov
         uses: bridgecrewio/checkov-action@master
         with:
           directory: terraform/
           framework: terraform
-          soft_fail: true # Set to false to block builds on security errors
+          soft_fail: true
+
+  # ─── 4. Push to ECR + GitOps tag bump + ArgoCD sync ───────────────────────
+  #        Only runs on direct push to main (not on PRs)
+  deploy:
+    name: Push to ECR & Deploy via ArgoCD
+    runs-on: ubuntu-latest
+    needs: [ docker-scan, terraform-check ]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write   # needed to commit the image-tag bump back to git
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Build once, tag with both git SHA (immutable) and latest
+      - name: Build & push backend image
+        env:
+          IMAGE: ${{ env.ECR_REGISTRY }}/financeguard-backend
+        run: |
+          docker build \
+            -t $IMAGE:${{ github.sha }} \
+            -t $IMAGE:latest \
+            ./app/backend
+          docker push $IMAGE:${{ github.sha }}
+          docker push $IMAGE:latest
+
+      - name: Build & push frontend image
+        env:
+          IMAGE: ${{ env.ECR_REGISTRY }}/financeguard-frontend
+        run: |
+          docker build \
+            -t $IMAGE:${{ github.sha }} \
+            -t $IMAGE:latest \
+            ./app/frontend
+          docker push $IMAGE:${{ github.sha }}
+          docker push $IMAGE:latest
+
+      # Update the Helm values files so ArgoCD deploys the exact SHA that passed CI
+      - name: Bump image tags in Helm values
+        run: |
+          sed -i "s/^  tag:.*/  tag: \"${{ github.sha }}\"/" helm/backend/values.yaml
+          sed -i "s/^  tag:.*/  tag: \"${{ github.sha }}\"/" helm/frontend/values.yaml
+
+      - name: Commit & push tag bump
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add helm/backend/values.yaml helm/frontend/values.yaml
+          git diff --staged --quiet || \
+            git commit -m "ci: bump image tags to ${{ github.sha }} [skip ci]"
+          git push
+
+      # Connect to EKS and trigger an immediate ArgoCD hard-refresh
+      # (without this ArgoCD would pick up the git change within ~3 min on its own)
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name   ${{ env.EKS_CLUSTER }}
+
+      - name: Trigger ArgoCD hard refresh
+        run: |
+          kubectl annotate app financeguard-backend-dev \
+            argocd.argoproj.io/refresh=hard -n argocd --overwrite
+          kubectl annotate app financeguard-frontend-dev \
+            argocd.argoproj.io/refresh=hard -n argocd --overwrite
+
+      - name: Wait for rollout
+        run: |
+          sleep 30
+          kubectl rollout status deployment/financeguard-backend-dev-backend  -n dev --timeout=180s
+          kubectl rollout status deployment/financeguard-frontend-dev-frontend -n dev --timeout=180s

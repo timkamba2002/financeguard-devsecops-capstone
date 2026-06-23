@@ -99,65 +99,84 @@
 
     <script>
         // ==================== CONFIG ====================
-        let API_URL = "http://localhost:8000";
+        let API_URL = localStorage.getItem("FG_API_URL") || "http://localhost:8000";
         let transactions = [];
 
         function showToast(msg) {
             console.log("[TOAST]", msg);
             const toast = document.createElement("div");
-            toast.style.cssText = "position:fixed;bottom:20px;right:20px;background:#1e2937;color:white;padding:12px 20px;border-radius:8px;z-index:9999";
+            toast.style.cssText = "position:fixed;bottom:20px;right:20px;background:#1e2937;color:white;padding:12px 20px;border-radius:8px;z-index:9999;border:1px solid #374151";
             toast.textContent = msg;
             document.body.appendChild(toast);
             setTimeout(() => toast.remove(), 3000);
         }
 
         // ==================== FORM SUBMIT WITH DEBUG ====================
-        document.getElementById("tx-form").addEventListener("submit", async function(event) {
+        async function handleFormSubmit(event) {
             event.preventDefault();
-            
             console.log("%c[DEBUG] Form submitted!", "color: lime; font-weight: bold");
 
             const desc = document.getElementById("tx-desc").value.trim();
             const amountInput = parseFloat(document.getElementById("tx-amount").value);
             const category = document.getElementById("tx-cat").value.trim();
-            const type = document.querySelector('input[name="tx-type"]:checked').value;
+            
+            const typeInput = document.querySelector('input[name="tx-type"]:checked');
+            if (!typeInput) {
+                console.error("[DEBUG] Error: No transaction type selected.");
+                showToast("Please select a transaction type.");
+                return;
+            }
+            const type = typeInput.value;
             const amount = type === "expense" ? -Math.abs(amountInput) : Math.abs(amountInput);
 
-            console.log("[DEBUG] Data:", { desc, amount, category, type, API_URL });
+            console.log("[DEBUG] Payload preparing...", { desc, amount, category, type, API_URL });
 
             try {
-                console.log("[DEBUG] Sending POST request...");
+                console.log("[DEBUG] Sending POST request to:", `${API_URL}/api/v1/transactions`);
                 
                 const res = await fetch(`${API_URL}/api/v1/transactions`, {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers: { 
+                        "Content-Type": "application/json",
+                        "Authorization": "Bearer mock-token-dev-sec-ops" // Crucial fix for HTTPBearer 403 Forbidden!
+                    },
                     body: JSON.stringify({ description: desc, amount, category, type })
                 });
 
                 console.log("[DEBUG] Response status:", res.status);
 
                 if (res.ok) {
-                    console.log("%c[DEBUG] SUCCESS - Transaction saved!", "color: lime");
-                    showToast("Transaction saved!");
+                    const data = await res.json();
+                    console.log("%c[DEBUG] SUCCESS - Saved Transaction:", "color: lime", data);
+                    showToast("Transaction saved successfully!");
                     document.getElementById("tx-form").reset();
                     await fetchTransactions();
                 } else {
                     const err = await res.json().catch(() => ({}));
-                    console.error("[DEBUG] Backend error:", err);
+                    console.error("[DEBUG] Backend error details:", err);
                     showToast("Failed: " + (err.detail || res.status));
                 }
             } catch (err) {
                 console.error("[DEBUG] Network error:", err);
                 showToast("Cannot reach backend");
             }
-        });
+        }
 
         async function fetchTransactions() {
             try {
-                const res = await fetch(`${API_URL}/api/v1/transactions`);
+                console.log("[DEBUG] Fetching transactions from:", `${API_URL}/api/v1/transactions`);
+                const res = await fetch(`${API_URL}/api/v1/transactions`, {
+                    headers: {
+                        "Authorization": "Bearer mock-token-dev-sec-ops" // Crucial fix for HTTPBearer 403 Forbidden!
+                    }
+                });
+                console.log("[DEBUG] Fetch response status:", res.status);
                 if (res.ok) {
                     transactions = await res.json();
+                    console.log("[DEBUG] Fetched transactions successfully:", transactions);
                     renderTransactions();
+                } else {
+                    console.error("[DEBUG] Fetch failed with status:", res.status);
                 }
             } catch (e) {
                 console.error("[DEBUG] Fetch failed:", e);
@@ -193,11 +212,20 @@
             }
         }
 
-        // Init
-        window.onload = function() {
-            console.log("%c[FinanceGuard] Page loaded successfully. API_URL =", "color: cyan", API_URL);
+        // Wait for DOM to be fully loaded before attaching handlers
+        window.addEventListener("DOMContentLoaded", () => {
+            console.log("%c[FinanceGuard] DOM loaded successfully. API_URL =", "color: cyan", API_URL);
+            
+            const form = document.getElementById("tx-form");
+            if (form) {
+                form.addEventListener("submit", handleFormSubmit);
+                console.log("[FinanceGuard] Submit event listener registered.");
+            } else {
+                console.error("[FinanceGuard] Error: Form #tx-form not found!");
+            }
+            
             fetchTransactions();
-        };
+        });
     </script>
 </body>
 </html>

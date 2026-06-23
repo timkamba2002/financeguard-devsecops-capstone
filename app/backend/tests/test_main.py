@@ -4,9 +4,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from database import Base, get_db
-from main import app
-from models import TransactionModel
+from main import app, Base, get_db, TransactionModel
 
 # Use a temporary file-based SQLite database for running the tests
 TEST_DB_FILE = "./test_temp.db"
@@ -33,14 +31,14 @@ def run_around_tests():
     Base.metadata.create_all(bind=engine)
     db = TestingSessionLocal()
     db.add(TransactionModel(
-        user_id="user_mock123",
+        user_id="demo-user-123",
         description="Consulting Fee",
         amount=5000.0,
         category="Revenue",
         type="income"
     ))
     db.add(TransactionModel(
-        user_id="user_mock123",
+        user_id="demo-user-123",
         description="GitHub Enterprise",
         amount=-250.0,
         category="SaaS",

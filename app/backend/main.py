@@ -15,9 +15,14 @@ DB_USER = os.getenv("user")
 DB_PASSWORD = os.getenv("password")
 DB_NAME = os.getenv("dbname")
 
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode=require"
+# Fallback to local SQLite during testing/local development if DB_HOST is not set
+if not DB_HOST:
+    DATABASE_URL = "sqlite:///./financeguard.db"
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?sslmode=require"
+    engine = create_engine(DATABASE_URL)
 
-engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -31,8 +36,6 @@ class TransactionModel(Base):
     category = Column(String)
     type = Column(String)  # "income" or "expense"
     created_at = Column(DateTime, default=datetime.utcnow)
-
-Base.metadata.create_all(bind=engine)
 
 def get_db():
     db = SessionLocal()
@@ -76,6 +79,11 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     if SKIP_AUTH_VERIFICATION:
         return {"user_id": "demo-user-123"}
     raise HTTPException(status_code=501, detail="Full auth not implemented")
+
+@app.on_event("startup")
+async def startup_event():
+    Base.metadata.create_all(bind=engine)
+    print("Database tables initialized.")
 
 @app.get("/health")
 def health_check():

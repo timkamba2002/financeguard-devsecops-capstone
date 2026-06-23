@@ -1,5 +1,8 @@
 replicaCount: 2
 
+image:
+  tag: "latest"
+
 env:
   ENVIRONMENT: "dev"
   SKIP_AUTH_VERIFICATION: "true"

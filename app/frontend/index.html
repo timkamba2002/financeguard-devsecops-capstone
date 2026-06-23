@@ -116,14 +116,18 @@
             event.preventDefault();
             console.log("%c[DEBUG] Form submitted!", "color: lime; font-weight: bold");
 
+            const submitBtn = event.target.querySelector('button[type="submit"]');
+            if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Sending…"; }
+
             const desc = document.getElementById("tx-desc").value.trim();
             const amountInput = parseFloat(document.getElementById("tx-amount").value);
             const category = document.getElementById("tx-cat").value.trim();
-            
+
             const typeInput = document.querySelector('input[name="tx-type"]:checked');
             if (!typeInput) {
                 console.error("[DEBUG] Error: No transaction type selected.");
                 showToast("Please select a transaction type.");
+                if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Post Secured Entry"; }
                 return;
             }
             const type = typeInput.value;
@@ -132,13 +136,13 @@
             console.log("[DEBUG] Payload preparing...", { desc, amount, category, type, API_URL });
 
             try {
-                console.log("[DEBUG] Sending POST request to:", `${API_URL}/api/v1/transactions`);
-                
+                console.log("[DEBUG] Sending POST to:", `${API_URL}/api/v1/transactions`);
+
                 const res = await fetch(`${API_URL}/api/v1/transactions`, {
                     method: "POST",
-                    headers: { 
+                    headers: {
                         "Content-Type": "application/json",
-                        "Authorization": "Bearer mock-token-dev-sec-ops" // Crucial fix for HTTPBearer 403 Forbidden!
+                        "Authorization": "Bearer mock-token-dev-sec-ops"
                     },
                     body: JSON.stringify({ description: desc, amount, category, type })
                 });
@@ -147,18 +151,22 @@
 
                 if (res.ok) {
                     const data = await res.json();
-                    console.log("%c[DEBUG] SUCCESS - Saved Transaction:", "color: lime", data);
+                    console.log("%c[DEBUG] SUCCESS - Saved transaction:", "color: lime", data);
                     showToast("Transaction saved successfully!");
                     document.getElementById("tx-form").reset();
                     await fetchTransactions();
                 } else {
-                    const err = await res.json().catch(() => ({}));
-                    console.error("[DEBUG] Backend error details:", err);
-                    showToast("Failed: " + (err.detail || res.status));
+                    const text = await res.text();
+                    let detail = res.status;
+                    try { detail = JSON.parse(text).detail || res.status; } catch (_) { detail = text || res.status; }
+                    console.error("[DEBUG] Backend error:", res.status, text);
+                    showToast("Failed: " + detail);
                 }
             } catch (err) {
-                console.error("[DEBUG] Network error:", err);
-                showToast("Cannot reach backend");
+                console.error("[DEBUG] Network/fetch error:", err);
+                showToast("Cannot reach backend: " + err.message);
+            } finally {
+                if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Post Secured Entry"; }
             }
         }
 
@@ -212,20 +220,26 @@
             }
         }
 
-        // Wait for DOM to be fully loaded before attaching handlers
-        window.addEventListener("DOMContentLoaded", () => {
-            console.log("%c[FinanceGuard] DOM loaded successfully. API_URL =", "color: cyan", API_URL);
-            
+        function init() {
+            console.log("%c[FinanceGuard] Initializing. API_URL =", "color: cyan", API_URL);
+
             const form = document.getElementById("tx-form");
             if (form) {
                 form.addEventListener("submit", handleFormSubmit);
-                console.log("[FinanceGuard] Submit event listener registered.");
+                console.log("[FinanceGuard] Submit listener registered on #tx-form.");
             } else {
-                console.error("[FinanceGuard] Error: Form #tx-form not found!");
+                console.error("[FinanceGuard] CRITICAL: #tx-form not found in DOM!");
             }
-            
+
             fetchTransactions();
-        });
+        }
+
+        // Guard handles the rare case where the script runs after DOMContentLoaded
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", init);
+        } else {
+            init();
+        }
     </script>
 </body>
 </html>

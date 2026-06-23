@@ -4,7 +4,7 @@ from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.orm import sessionmaker, Session, declarative_base
 
@@ -69,6 +69,8 @@ class TransactionCreate(BaseModel):
     type: str
 
 class Transaction(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     description: str
     amount: float

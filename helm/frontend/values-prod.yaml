@@ -4,6 +4,9 @@ image:
   tag: "latest"
   pullPolicy: Always
 
+env:
+  VITE_API_BASE_URL: "https://api.financeguard.io"
+
 resources:
   limits:
     cpu: 400m

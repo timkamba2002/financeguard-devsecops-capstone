@@ -8,3 +8,6 @@ autoscaling:
   minReplicas: 2
   maxReplicas: 5
   targetCPUUtilizationPercentage: 80
+
+env:
+  VITE_API_BASE_URL: "http://api.dev.financeguard.local"

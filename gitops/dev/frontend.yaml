@@ -18,7 +18,7 @@ spec:
         - values-dev.yaml
       parameters:
         - name: image.tag
-          value: "96be7a5c182d2aa01b611437daa27de9025ef821"
+          value: "1e07ec28904ec73f49e57c1ee3b9656d0d641642"
   destination:
     server: https://kubernetes.default.svc
     namespace: dev

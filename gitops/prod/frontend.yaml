@@ -17,7 +17,7 @@ spec:
         - values-prod.yaml
       parameters:
         - name: image.tag
-          value: "d07a1251c1212e9e3d01ec9879d942cee0f43768"
+          value: "07ba196c76895d97ad34845c077b1a5395890f7f"
   destination:
     server: https://kubernetes.default.svc
     namespace: prod

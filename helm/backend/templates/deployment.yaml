@@ -13,8 +13,14 @@ spec:
     metadata:
       labels:
         app: financeguard-backend
+      annotations:
+        # Prometheus will scrape /metrics on port 8000 via these annotations
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "8000"
+        prometheus.io/path:   "/metrics"
     spec:
       containers:
+        # ── Main application ──────────────────────────────────────────────────
         - name: backend
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -25,11 +31,50 @@ spec:
                 name: financeguard-db-secret
           env:
             - name: SKIP_AUTH_VERIFICATION
-              value: "true"
+              value: {{ .Values.env.SKIP_AUTH_VERIFICATION | quote }}
+            # Tell the OTel SDK to send to the sidecar on localhost
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://localhost:4317"
+            - name: OTEL_SERVICE_NAME
+              value: "financeguard-backend"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "deployment.environment={{ .Values.env.ENVIRONMENT }}"
           resources:
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu:    {{ .Values.resources.limits.cpu }}
+              memory: {{ .Values.resources.limits.memory }}
             requests:
-              cpu: 200m
-              memory: 256Mi
+              cpu:    {{ .Values.resources.requests.cpu }}
+              memory: {{ .Values.resources.requests.memory }}
+
+        {{- if .Values.otelSidecar.enabled }}
+        # ── OpenTelemetry Collector sidecar ───────────────────────────────────
+        # The sidecar receives traces/metrics/logs from the app on localhost,
+        # then forwards them to the central OTel Collector in the monitoring
+        # namespace. This decouples the app from the central collector address
+        # and allows per-pod buffering and retry.
+        - name: otel-collector
+          image: "otel/opentelemetry-collector-contrib:{{ .Values.otelSidecar.version }}"
+          args: ["--config=/conf/otel-sidecar.yaml"]
+          ports:
+            - containerPort: 4317   # OTLP gRPC — app sends here
+            - containerPort: 4318   # OTLP HTTP — fallback
+            - containerPort: 8888   # Collector's own metrics
+          resources:
+            requests:
+              cpu:    50m
+              memory: 64Mi
+            limits:
+              cpu:    200m
+              memory: 200Mi
+          volumeMounts:
+            - name: otel-sidecar-config
+              mountPath: /conf
+        {{- end }}
+
+      {{- if .Values.otelSidecar.enabled }}
+      volumes:
+        - name: otel-sidecar-config
+          configMap:
+            name: {{ .Release.Name }}-otel-sidecar-config
+      {{- end }}

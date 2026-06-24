@@ -3,6 +3,8 @@ kind: Application
 metadata:
   name: financeguard-backend-prod
   namespace: argocd
+  annotations:
+    argocd.argoproj.io/managed-by-pipeline: "true"
 spec:
   project: default
   source:
@@ -13,10 +15,15 @@ spec:
       valueFiles:
         - values.yaml
         - values-prod.yaml
+      parameters:
+        - name: image.tag
+          value: "latest"
   destination:
     server: https://kubernetes.default.svc
     namespace: prod
   syncPolicy:
     automated:
-      prune: false      # prod: never auto-prune, require manual confirmation
+      prune:    false     # prod: never auto-prune — manual confirmation required
       selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

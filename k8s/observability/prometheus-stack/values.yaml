@@ -42,6 +42,20 @@ grafana:
     datasources:
       enabled: true
 
+  # ALB Ingress — exposes Grafana publicly via the AWS Load Balancer Controller
+  # After helm upgrade, get the URL with:
+  #   kubectl get ingress -n monitoring -l app.kubernetes.io/name=grafana
+  ingress:
+    enabled: true
+    ingressClassName: alb
+    annotations:
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip          # required for Fargate
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+      alb.ingress.kubernetes.io/healthcheck-path: /api/health
+    hosts: []   # ALB does not need a hostname — it assigns its own DNS
+    path: /
+
   grafana.ini:
     server:
       root_url: "%(protocol)s://%(domain)s:%(http_port)s"

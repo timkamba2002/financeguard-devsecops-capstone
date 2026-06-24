@@ -15,3 +15,6 @@ autoscaling:
 
 ingress:
   enabled: true
+
+otelSidecar:
+  enabled: true

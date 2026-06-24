@@ -1,0 +1,48 @@
+{{- if .Values.otelSidecar.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-otel-sidecar-config
+  labels:
+    app: financeguard-backend
+data:
+  otel-sidecar.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317   # app sends here via localhost
+          http:
+            endpoint: 0.0.0.0:4318
+
+    processors:
+      batch:
+        timeout: 1s
+        send_batch_size: 512
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 75
+        spike_limit_percentage: 15
+
+    exporters:
+      # Forward everything to the central OTel Collector in monitoring namespace
+      otlp/central:
+        endpoint: {{ .Values.otelSidecar.centralCollectorEndpoint }}
+        tls:
+          insecure: true
+
+    service:
+      pipelines:
+        traces:
+          receivers:  [otlp]
+          processors: [memory_limiter, batch]
+          exporters:  [otlp/central]
+        metrics:
+          receivers:  [otlp]
+          processors: [memory_limiter, batch]
+          exporters:  [otlp/central]
+        logs:
+          receivers:  [otlp]
+          processors: [memory_limiter, batch]
+          exporters:  [otlp/central]
+{{- end }}

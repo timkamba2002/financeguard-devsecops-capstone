@@ -31,6 +31,14 @@ autoscaling:
 ingress:
   enabled: false   # overridden true in values-<env>.yaml
 
+# OTel Collector sidecar — runs alongside the app container in the same pod.
+# The app sends telemetry to localhost:4317; the sidecar forwards to the
+# central OTel Collector in the monitoring namespace.
+otelSidecar:
+  enabled: false   # overridden true in values-<env>.yaml
+  version: "0.100.0"
+  centralCollectorEndpoint: "otel-collector.monitoring.svc.cluster.local:4317"
+
 envFrom:
   - secretRef:
       name: financeguard-db-secret

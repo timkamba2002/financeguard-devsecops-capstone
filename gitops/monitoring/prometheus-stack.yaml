@@ -1,0 +1,29 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: prometheus-stack
+  namespace: argocd
+spec:
+  project: default
+  # Multi-source: chart from Helm repo + values file from this git repo.
+  # $values resolves to the git ref named "values" below.
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart:   kube-prometheus-stack
+      targetRevision: "58.2.1"
+      helm:
+        valueFiles:
+          - $values/k8s/observability/prometheus-stack/values.yaml
+    - repoURL: https://github.com/timkamba2002/financeguard-devsecops-capstone.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune:    true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true   # required for large CRDs like PrometheusRule

@@ -1,29 +1,21 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: financeguard-frontend-dev
+  name: monitoring-stack
   namespace: argocd
-  annotations:
-    argocd.argoproj.io/managed-by-pipeline: "true"
 spec:
   project: default
   source:
     repoURL: https://github.com/timkamba2002/financeguard-devsecops-capstone.git
     targetRevision: main
-    path: helm/frontend
-    helm:
-      valueFiles:
-        - values.yaml
-        - values-dev.yaml
-      parameters:
-        - name: image.tag
-          value: "latest"
+    path: gitops/monitoring
+    directory:
+      recurse: false
+      exclude: "app-of-apps.yaml"   # don't try to apply itself recursively
   destination:
     server: https://kubernetes.default.svc
-    namespace: dev
+    namespace: argocd
   syncPolicy:
     automated:
       prune:    true
       selfHeal: true
-    syncOptions:
-      - CreateNamespace=true

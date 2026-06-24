@@ -3,20 +3,27 @@ kind: Application
 metadata:
   name: financeguard-frontend-staging
   namespace: argocd
+  annotations:
+    argocd.argoproj.io/managed-by-pipeline: "true"
 spec:
   project: default
   source:
     repoURL: https://github.com/timkamba2002/financeguard-devsecops-capstone.git
-    targetRevision: main    # trunk-based: all environments track main
+    targetRevision: main
     path: helm/frontend
     helm:
       valueFiles:
         - values.yaml
         - values-staging.yaml
+      parameters:
+        - name: image.tag
+          value: "latest"
   destination:
     server: https://kubernetes.default.svc
     namespace: staging
   syncPolicy:
     automated:
-      prune: true
+      prune:    true
       selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -3,20 +3,31 @@ kind: Application
 metadata:
   name: financeguard-backend-dev
   namespace: argocd
+  annotations:
+    # Pipeline writes the new SHA here via:
+    #   yq e '.spec.source.helm.parameters[0].value = "NEW_SHA"' gitops/dev/backend.yaml
+    argocd.argoproj.io/managed-by-pipeline: "true"
 spec:
   project: default
   source:
     repoURL: https://github.com/timkamba2002/financeguard-devsecops-capstone.git
-    targetRevision: main    # trunk-based: all environments track main
+    targetRevision: main
     path: helm/backend
     helm:
       valueFiles:
         - values.yaml
         - values-dev.yaml
+      parameters:
+        # Image tag — updated by the CI/CD pipeline after every successful build.
+        # Argo CD detects this change in git and triggers a helm upgrade automatically.
+        - name: image.tag
+          value: "latest"
   destination:
     server: https://kubernetes.default.svc
     namespace: dev
   syncPolicy:
     automated:
-      prune: true
+      prune:    true
       selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

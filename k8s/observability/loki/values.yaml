@@ -7,8 +7,9 @@ loki:
   enabled: true
   isDistributed: false
 
+  # EKS Fargate: EBS PVCs can't bind — use emptyDir (ephemeral, fine for capstone)
   persistence:
-    enabled: false   # EKS Fargate: EBS PVCs can't bind — use emptyDir (data lost on restart)
+    enabled: false
 
   config:
     auth_enabled: false
@@ -16,37 +17,49 @@ loki:
     server:
       http_listen_port: 3100
 
-    common:
-      path_prefix: /var/loki
-      storage:
-        filesystem:
-          chunks_directory: /var/loki/chunks
-          rules_directory:  /var/loki/rules
-      replication_factor: 1
-      ring:
-        kvstore:
-          store: inmemory
+    # Use boltdb-shipper (Loki 2.x default) with filesystem store.
+    # Paths match where the chart mounts the emptyDir volume (/data).
+    ingester:
+      lifecycler:
+        address: 127.0.0.1
+        ring:
+          kvstore:
+            store: inmemory
+          replication_factor: 1
+        final_sleep: 0s
+      chunk_idle_period: 1h
+      max_chunk_age: 1h
+      chunk_target_size: 1048576
 
     schema_config:
       configs:
-        - from: "2024-01-01"
-          store: boltdb-shipper
+        - from: "2020-10-24"
+          store:        boltdb-shipper
           object_store: filesystem
-          schema: v12
+          schema:       v11
           index:
             prefix: index_
             period: 24h
 
+    storage_config:
+      boltdb_shipper:
+        active_index_directory: /data/loki/boltdb-shipper-active
+        cache_location:         /data/loki/boltdb-shipper-cache
+        shared_store:           filesystem
+      filesystem:
+        directory: /data/loki/chunks
+
     limits_config:
-      retention_period: 744h
-      reject_old_samples: true
+      enforce_metric_name:      false
+      reject_old_samples:       true
       reject_old_samples_max_age: 168h
-      ingestion_rate_mb: 16
-      ingestion_burst_size_mb: 32
+
+    chunk_store_config:
+      max_look_back_period: 0s
 
     compactor:
-      retention_enabled: true
-      retention_delete_delay: 2h
+      working_directory: /data/loki/boltdb-shipper-compactor
+      shared_store:      filesystem
 
   resources:
     requests:
@@ -57,7 +70,7 @@ loki:
       memory: 512Mi
 
 # Promtail is a DaemonSet — EKS Fargate does not support DaemonSets.
-# Disabled here. Logs reach Loki via the OTel Collector instead (OTLP → Loki exporter).
+# Logs reach Loki via the OTel Collector OTLP→Loki exporter instead.
 promtail:
   enabled: false
 

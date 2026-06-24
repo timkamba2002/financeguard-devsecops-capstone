@@ -12,25 +12,9 @@ grafana:
   persistence:
     enabled: false   # EKS Fargate: no EBS StorageClass — use emptyDir (data lost on restart, fine for demo)
 
-  # Pre-configured datasources: Prometheus, Loki, Tempo
-  additionalDataSources:
-    - name: Loki
-      type: loki
-      url: http://loki.monitoring.svc.cluster.local:3100
-      access: proxy
-      isDefault: false
-    - name: Tempo
-      type: tempo
-      url: http://tempo.monitoring.svc.cluster.local:3100
-      access: proxy
-      isDefault: false
-      jsonData:
-        httpMethod: GET
-        serviceMap:
-          datasourceUid: prometheus   # links traces to service maps in Grafana
-        tracesToLogs:
-          datasourceUid: loki         # jump from trace to logs in Loki
-          tags: [pod, namespace]
+  # Loki and Tempo are provisioned via k8s/observability/datasources/grafana-datasources.yaml
+  # (a sidecar-loaded ConfigMap) so they get explicit UIDs that the dashboards reference.
+  additionalDataSources: []
 
   # Sidecar that auto-discovers ConfigMaps labelled grafana_dashboard=1
   sidecar:

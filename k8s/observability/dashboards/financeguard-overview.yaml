@@ -1,0 +1,248 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: financeguard-overview-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"   # picked up by the Grafana sidecar auto-loader
+data:
+  financeguard-overview.json: |
+    {
+      "title": "FinanceGuard — Application Overview",
+      "uid": "financeguard-overview",
+      "tags": ["financeguard", "kubernetes"],
+      "timezone": "browser",
+      "schemaVersion": 38,
+      "refresh": "30s",
+      "time": { "from": "now-1h", "to": "now" },
+      "panels": [
+
+        {
+          "id": 1, "type": "row",
+          "title": "🚀 Pod Health",
+          "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+
+        {
+          "id": 2, "type": "stat",
+          "title": "Running Pods — dev",
+          "gridPos": { "x": 0, "y": 1, "w": 4, "h": 4 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background", "graphMode": "none"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "green", "value": 2 }
+                ]
+              }
+            }
+          },
+          "targets": [{
+            "expr": "count(kube_pod_status_phase{namespace=\"dev\", phase=\"Running\"})",
+            "legendFormat": "Running"
+          }]
+        },
+
+        {
+          "id": 3, "type": "stat",
+          "title": "Running Pods — staging",
+          "gridPos": { "x": 4, "y": 1, "w": 4, "h": 4 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background", "graphMode": "none"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "green", "value": 2 }
+                ]
+              }
+            }
+          },
+          "targets": [{
+            "expr": "count(kube_pod_status_phase{namespace=\"staging\", phase=\"Running\"})",
+            "legendFormat": "Running"
+          }]
+        },
+
+        {
+          "id": 4, "type": "stat",
+          "title": "Running Pods — prod",
+          "gridPos": { "x": 8, "y": 1, "w": 4, "h": 4 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background", "graphMode": "none"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "green", "value": 2 }
+                ]
+              }
+            }
+          },
+          "targets": [{
+            "expr": "count(kube_pod_status_phase{namespace=\"prod\", phase=\"Running\"})",
+            "legendFormat": "Running"
+          }]
+        },
+
+        {
+          "id": 5, "type": "stat",
+          "title": "Container Restarts (1h)",
+          "gridPos": { "x": 12, "y": 1, "w": 4, "h": 4 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background", "graphMode": "none"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "red", "value": 5 }
+                ]
+              }
+            }
+          },
+          "targets": [{
+            "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=~\"dev|staging|prod\"}[1h]))",
+            "legendFormat": "Restarts"
+          }]
+        },
+
+        {
+          "id": 6, "type": "stat",
+          "title": "Pending / Failed Pods",
+          "gridPos": { "x": 16, "y": 1, "w": 4, "h": 4 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background", "graphMode": "none"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 1 }
+                ]
+              }
+            }
+          },
+          "targets": [{
+            "expr": "count(kube_pod_status_phase{namespace=~\"dev|staging|prod\", phase=~\"Pending|Failed\"}) or vector(0)",
+            "legendFormat": "Unhealthy"
+          }]
+        },
+
+        {
+          "id": 7, "type": "row",
+          "title": "📈 Resource Usage",
+          "gridPos": { "x": 0, "y": 5, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+
+        {
+          "id": 8, "type": "timeseries",
+          "title": "CPU Usage by Pod (dev/staging/prod)",
+          "gridPos": { "x": 0, "y": 6, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "lineWidth": 1, "fillOpacity": 5 }
+            }
+          },
+          "targets": [{
+            "expr": "sum by (pod, namespace) (rate(container_cpu_usage_seconds_total{namespace=~\"dev|staging|prod\", container!=\"\", container!=\"POD\"}[5m]))",
+            "legendFormat": "{{namespace}}/{{pod}}"
+          }]
+        },
+
+        {
+          "id": 9, "type": "timeseries",
+          "title": "Memory Usage by Pod (dev/staging/prod)",
+          "gridPos": { "x": 12, "y": 6, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": { "lineWidth": 1, "fillOpacity": 5 }
+            }
+          },
+          "targets": [{
+            "expr": "sum by (pod, namespace) (container_memory_working_set_bytes{namespace=~\"dev|staging|prod\", container!=\"\", container!=\"POD\"})",
+            "legendFormat": "{{namespace}}/{{pod}}"
+          }]
+        },
+
+        {
+          "id": 10, "type": "row",
+          "title": "🔄 Deployments",
+          "gridPos": { "x": 0, "y": 14, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+
+        {
+          "id": 11, "type": "table",
+          "title": "Deployment Replica Status",
+          "gridPos": { "x": 0, "y": 15, "w": 24, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "options": {
+            "sortBy": [{ "desc": false, "displayName": "Namespace" }],
+            "footer": { "show": false }
+          },
+          "targets": [
+            {
+              "expr": "kube_deployment_status_replicas_available{namespace=~\"dev|staging|prod\"}",
+              "legendFormat": "{{namespace}} / {{deployment}}",
+              "instant": true,
+              "refId": "available"
+            },
+            {
+              "expr": "kube_deployment_spec_replicas{namespace=~\"dev|staging|prod\"}",
+              "legendFormat": "{{namespace}} / {{deployment}}",
+              "instant": true,
+              "refId": "desired"
+            }
+          ],
+          "transformations": [
+            { "id": "merge", "options": {} },
+            {
+              "id": "organize",
+              "options": {
+                "renameByName": {
+                  "namespace": "Namespace",
+                  "deployment": "Deployment",
+                  "Value #available": "Available",
+                  "Value #desired": "Desired"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }

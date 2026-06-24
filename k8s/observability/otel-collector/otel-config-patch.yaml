@@ -1,0 +1,129 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-opentelemetry-collector
+  namespace: monitoring
+data:
+  relay: |
+    exporters:
+      debug:
+        verbosity: basic
+      loki:
+        default_labels_enabled:
+          exporter: false
+          job: false
+        endpoint: http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
+      otlp/tempo:
+        endpoint: tempo.monitoring.svc.cluster.local:4317
+        tls:
+          insecure: true
+      prometheusremotewrite:
+        endpoint: http://prometheus-stack-kube-prom-prometheus.monitoring.svc.cluster.local:9090/api/v1/write
+        tls:
+          insecure: true
+    extensions:
+      health_check:
+        endpoint: ${env:MY_POD_IP}:13133
+    processors:
+      batch:
+        send_batch_size: 1024
+        timeout: 1s
+      k8sattributes:
+        auth_type: serviceAccount
+        extract:
+          labels:
+          - from: pod
+            key: app
+            tag_name: app
+          metadata:
+          - k8s.pod.name
+          - k8s.pod.uid
+          - k8s.namespace.name
+          - k8s.node.name
+          - k8s.deployment.name
+        passthrough: false
+        pod_association:
+        - sources:
+          - from: resource_attribute
+            name: k8s.pod.ip
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 15
+      resource:
+        attributes:
+        - action: upsert
+          key: deployment.environment
+          value: ''
+      transform/loki_labels:
+        log_statements:
+        - context: resource
+          statements:
+          - set(attributes["namespace"], attributes["k8s.namespace.name"])
+          - set(attributes["app"], attributes["service.name"])
+          - set(attributes["pod"], attributes["k8s.pod.name"])
+          - set(attributes["loki.resource.labels"], "namespace,app,pod")
+    receivers:
+      jaeger:
+        protocols:
+          grpc:
+            endpoint: ${env:MY_POD_IP}:14250
+          thrift_compact:
+            endpoint: ${env:MY_POD_IP}:6831
+          thrift_http:
+            endpoint: ${env:MY_POD_IP}:14268
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            cors:
+              allowed_origins:
+              - '*'
+            endpoint: 0.0.0.0:4318
+      prometheus:
+        config:
+          scrape_configs:
+          - job_name: otel-collector
+            static_configs:
+            - targets:
+              - localhost:8888
+      zipkin:
+        endpoint: ${env:MY_POD_IP}:9411
+    service:
+      extensions:
+      - health_check
+      pipelines:
+        logs:
+          exporters:
+          - loki
+          processors:
+          - memory_limiter
+          - k8sattributes
+          - transform/loki_labels
+          - batch
+          receivers:
+          - otlp
+        metrics:
+          exporters:
+          - prometheusremotewrite
+          processors:
+          - memory_limiter
+          - k8sattributes
+          - resource
+          - batch
+          receivers:
+          - otlp
+          - prometheus
+        traces:
+          exporters:
+          - otlp/tempo
+          processors:
+          - memory_limiter
+          - k8sattributes
+          - batch
+          receivers:
+          - otlp
+      telemetry:
+        metrics:
+          address: 0.0.0.0:8888

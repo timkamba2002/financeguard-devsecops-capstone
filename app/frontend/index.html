@@ -142,8 +142,9 @@
 
     <script>
         // ==================== CONFIG ====================
-       let API_URL = localStorage.getItem("FG_API_URL") || 
-              "http://k8s-dev-financeg-4fddf1bc8c-49026185.us-east-1.elb.amazonaws.com";
+       // ${BACKEND_API_URL} is substituted at container startup by nginx envsubst
+       // (see Dockerfile). Override at runtime via the "Set API URL" button.
+       let API_URL = localStorage.getItem("FG_API_URL") || "${BACKEND_API_URL}";
         let transactions = [];
 
         function showToast(msg) {

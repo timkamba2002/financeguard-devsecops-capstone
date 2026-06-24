@@ -14,6 +14,7 @@ spec:
     targetRevision: main
     path: helm/backend
     helm:
+      releaseName: financeguard-backend   # must match across all envs so names are predictable
       valueFiles:
         - values.yaml
         - values-dev.yaml

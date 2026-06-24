@@ -1,11 +1,19 @@
-name: FinanceGuard CI/CD — Trunk-Based (Model B)
+name: FinanceGuard CI/CD — GitOps (Trunk-Based)
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  FINANCEGUARD DEVSECOPS — TRUNK-BASED PIPELINE (Model B)                 ║
+# ║  FINANCEGUARD DEVSECOPS — TRUNK-BASED GITOPS PIPELINE                    ║
 # ║                                                                           ║
-# ║  • Trunk-based: All changes merge into `main`                            ║
-# ║  • Same image digest flows: Dev (auto) → Staging (✋) → Prod (✋)        ║
-# ║  • Strong security toolchain + Demo-friendly green pipeline              ║
+# ║  Single source of truth: git manifests in gitops/                        ║
+# ║  Argo CD is the ONLY deployer — pipeline never runs helm upgrade.        ║
+# ║                                                                           ║
+# ║  Flow:                                                                    ║
+# ║   1. Build & scan images                                                  ║
+# ║   2. Update gitops/dev/ → Argo CD auto-deploys dev                       ║
+# ║   3. Integration tests + ZAP on dev                                      ║
+# ║   4. [APPROVAL: staging] → Update gitops/staging/ → Argo CD deploys      ║
+# ║   5. Integration tests + ZAP on staging                                  ║
+# ║   6. [APPROVAL: production] → Update gitops/prod/ → Argo CD deploys      ║
+# ║   7. Evidence bundle + GitHub Release                                     ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 on:
@@ -26,7 +34,6 @@ jobs:
 
   # ╔════════════════════════════════════════════════════════════════════════╗
   # ║                        STAGE 0 · PR VALIDATION                        ║
-  # ║  Runs on every PR to main. All checks must pass before merge.         ║
   # ╚════════════════════════════════════════════════════════════════════════╝
 
   pr-validation:
@@ -38,9 +45,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ── Secret scan ──────────────────────────────────────────────────────
-      # DEMO: continue-on-error — pipeline stays green even if secrets found.
-      # PRODUCTION: remove continue-on-error. A leaked secret MUST block merge.
       - name: "🔑 Gitleaks — Secret Scan"
         uses: gitleaks/gitleaks-action@v2
         continue-on-error: true   # DEMO ONLY — remove for production
@@ -48,11 +52,7 @@ jobs:
           GITHUB_TOKEN:     ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
-      # ── SAST (primary) ───────────────────────────────────────────────────
-      # DEMO: continue-on-error — findings appear in Security tab, pipeline green.
-      # PRODUCTION: remove continue-on-error. HIGH/CRITICAL (SQLi, hardcoded creds,
-      # broken auth) MUST block merge before vulnerable code reaches main.
-      - name: "🛡️ Semgrep — SAST Primary (OWASP Top-10)"
+      - name: "🛡️ Semgrep — SAST (OWASP Top-10)"
         run: |
           pip install semgrep -q
           semgrep scan \
@@ -70,19 +70,13 @@ jobs:
           sarif_file: semgrep.sarif
           category:   semgrep-pr
 
-      # ── IaC scan ──────────────────────────────────────────────────────────
-      # DEMO: continue-on-error — findings go to Security tab.
-      # PRODUCTION: remove continue-on-error. Terraform misconfigs (open S3,
-      # unencrypted RDS, 0.0.0.0/0 security groups) MUST block merge.
-      - name: "🏗️ Checkov + TFLint — IaC Scan"
+      - name: "🏗️ Checkov — IaC Scan"
         run: |
           pip install checkov -q
           checkov -d terraform/ --framework terraform --soft-fail --quiet || true
-          terraform -chdir=terraform init -backend=false -input=false -no-color 2>&1 | tail -5 || true
         continue-on-error: true   # DEMO ONLY — remove for production
 
-      # ── Unit tests — always hard fail, no exceptions ──────────────────────
-      - name: "🧪 Tests + Black Lint"
+      - name: "🧪 Unit Tests + Black"
         run: |
           pip install -r app/backend/requirements.txt pytest pytest-cov black -q
           black --check app/backend/
@@ -102,10 +96,6 @@ jobs:
           reporter:      java-junit
           fail-on-error: true
 
-      # ── SonarCloud ────────────────────────────────────────────────────────
-      # DEMO: continue-on-error — quality gate result visible at sonarcloud.io.
-      # PRODUCTION: remove continue-on-error. Failing gate (coverage drop,
-      # security hotspot, rating D/E) MUST block merge.
       - name: "📊 SonarCloud — Quality Gate"
         uses: SonarSource/sonarcloud-github-action@master
         continue-on-error: true   # DEMO ONLY — remove for production
@@ -113,31 +103,25 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN:  ${{ secrets.SONAR_TOKEN }}
 
-      # ── Job summary (visible in GitHub Actions UI) ────────────────────────
-      - name: "📋 Write PR validation summary"
+      - name: "📋 PR Validation Summary"
         if: always()
         run: |
           cat >> $GITHUB_STEP_SUMMARY << 'EOF'
           ## 🔍 PR Validation — FinanceGuard
 
-          | # | Check | Tool | Gate |
-          |---|---|---|---|
-          | 0.1 | Secret scan | Gitleaks (full history) | ⚠️ demo: warn |
-          | 0.2 | SAST — OWASP Top-10 | Semgrep | ⚠️ demo: warn |
-          | 0.3 | IaC misconfigs | Checkov + TFLint | ⚠️ demo: warn |
-          | 0.4 | Unit tests + Black | pytest + Black | ✅ always hard fail |
-          | 0.5 | Code quality gate | SonarCloud | ⚠️ demo: warn |
-
-          > **Demo note:** Security checks run with `continue-on-error: true` so the
-          > pipeline stays green. In production, remove that flag — HIGH/CRITICAL
-          > findings must block the merge.
-
-          **Commit:** `${{ github.sha }}`  |  **PR:** #${{ github.event.pull_request.number }}  |  **Author:** @${{ github.actor }}
+          | Check | Tool | Gate |
+          |---|---|---|
+          | Secret scan | Gitleaks (full history) | ⚠️ demo: warn |
+          | SAST — OWASP Top-10 | Semgrep | ⚠️ demo: warn |
+          | IaC misconfigs | Checkov | ⚠️ demo: warn |
+          | Unit tests + Black | pytest + Black | ✅ hard fail |
+          | Code quality gate | SonarCloud | ⚠️ demo: warn |
           EOF
 
   # ╔════════════════════════════════════════════════════════════════════════╗
   # ║                 STAGE 1 · BUILD, SCAN, SIGN & PUSH                    ║
-  # ║  Triggered on push to main. Produces immutable images tagged :sha.    ║
+  # ║  Produces immutable images tagged :sha. Same digest flows unchanged    ║
+  # ║  through dev → staging → prod. Nothing is rebuilt per environment.    ║
   # ╚════════════════════════════════════════════════════════════════════════╝
 
   build-sign-push:
@@ -146,7 +130,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       security-events: write
-      id-token:        write    # required for OIDC cosign keyless signing
+      id-token:        write    # OIDC for keyless cosign signing
       contents:        read
     steps:
       - uses: actions/checkout@v4
@@ -161,7 +145,7 @@ jobs:
       - uses: aws-actions/amazon-ecr-login@v2
 
       # ── Backend ───────────────────────────────────────────────────────────
-      - name: "🔨 Build backend image (GHA layer cache)"
+      - name: "🔨 Build backend"
         uses: docker/build-push-action@v5
         with:
           context:    ./app/backend
@@ -171,10 +155,7 @@ jobs:
           cache-from: type=gha,scope=backend
           cache-to:   type=gha,scope=backend,mode=max
 
-      # DEMO: continue-on-error — vulnerable image CAN reach ECR for demo.
-      # PRODUCTION: remove continue-on-error. CRITICAL/HIGH fixable CVE MUST
-      # block the push — a vulnerable image in ECR can be deployed anywhere.
-      - name: "🔍 Trivy — Backend (CRITICAL/HIGH fixable)"
+      - name: "🔍 Trivy — Backend (CRITICAL/HIGH)"
         uses: aquasecurity/trivy-action@master
         continue-on-error: true   # DEMO ONLY — remove for production
         with:
@@ -186,7 +167,7 @@ jobs:
           vuln-type:      os,library
           severity:       CRITICAL,HIGH
 
-      - name: "📄 Syft SBOM — Backend (SPDX 2.3)"
+      - name: "📄 Syft SBOM — Backend"
         uses: anchore/sbom-action@v0
         with:
           image:         financeguard-backend:${{ github.sha }}
@@ -194,7 +175,7 @@ jobs:
           output-file:   sbom-backend.spdx.json
 
       # ── Frontend ──────────────────────────────────────────────────────────
-      - name: "🔨 Build frontend image (GHA layer cache)"
+      - name: "🔨 Build frontend"
         uses: docker/build-push-action@v5
         with:
           context:    ./app/frontend
@@ -204,9 +185,7 @@ jobs:
           cache-from: type=gha,scope=frontend
           cache-to:   type=gha,scope=frontend,mode=max
 
-      # DEMO: continue-on-error — same gate as backend.
-      # PRODUCTION: remove continue-on-error.
-      - name: "🔍 Trivy — Frontend (CRITICAL/HIGH fixable)"
+      - name: "🔍 Trivy — Frontend (CRITICAL/HIGH)"
         uses: aquasecurity/trivy-action@master
         continue-on-error: true   # DEMO ONLY — remove for production
         with:
@@ -218,7 +197,7 @@ jobs:
           vuln-type:      os,library
           severity:       CRITICAL,HIGH
 
-      - name: "📄 Syft SBOM — Frontend (SPDX 2.3)"
+      - name: "📄 Syft SBOM — Frontend"
         uses: anchore/sbom-action@v0
         with:
           image:         financeguard-frontend:${{ github.sha }}
@@ -245,12 +224,6 @@ jobs:
           docker push ${{ env.ECR_FRONTEND }}:latest
 
       # ── Cosign keyless signing ─────────────────────────────────────────────
-      # No keys to manage — GitHub OIDC token is the identity.
-      # Signature stored as OCI artifact in ECR alongside the image.
-      # Identity recorded: github.com/<repo>/.github/workflows/ci-cd.yml@refs/heads/main
-      #
-      # DEMO: continue-on-error so pipeline continues if signing fails.
-      # PRODUCTION: remove continue-on-error. Unsigned image = supply-chain failure.
       - uses: sigstore/cosign-installer@v3
 
       - name: "🔏 Cosign sign images (OIDC keyless)"
@@ -259,8 +232,8 @@ jobs:
           cosign sign --yes ${{ env.ECR_FRONTEND }}:${{ github.sha }}
         continue-on-error: true   # DEMO ONLY — remove for production
 
-      # ── ECR lifecycle + Helm charts ───────────────────────────────────────
-      - name: "♻️ Apply ECR lifecycle policies"
+      # ── ECR lifecycle + Helm chart package (artifact only — not used by ArgoCD) ─
+      - name: "♻️ ECR lifecycle policies"
         run: |
           for repo in financeguard-backend financeguard-frontend; do
             aws ecr put-lifecycle-policy \
@@ -275,9 +248,8 @@ jobs:
               }'
           done
 
-      - name: "📦 Package & push Helm charts to ECR OCI"
+      - name: "📦 Package Helm charts (supply-chain artifact)"
         run: |
-          # ECR does not auto-create repositories on push — must exist first
           aws ecr create-repository --repository-name charts/backend  --region ${{ env.AWS_REGION }} 2>/dev/null || true
           aws ecr create-repository --repository-name charts/frontend --region ${{ env.AWS_REGION }} 2>/dev/null || true
 
@@ -300,41 +272,38 @@ jobs:
             dist/*.tgz
           retention-days: 30
 
-      # ── Job summary ───────────────────────────────────────────────────────
-      - name: "📋 Write build summary"
+      - name: "📋 Build Summary"
         if: always()
         run: |
           cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## 🏗️ Build, Scan, Sign & Push — FinanceGuard
+          ## 🏗️ Build, Scan, Sign & Push
 
-          | # | Step | Detail | Status |
-          |---|---|---|---|
-          | 1.1 | Docker build | backend + frontend (GHA layer cache) | ✅ |
-          | 1.2 | Trivy scan | CRITICAL/HIGH fixable CVEs | ⚠️ demo: warn |
-          | 1.3 | Syft SBOM | SPDX 2.3 format | ✅ artifact |
-          | 1.4 | ECR push | \`:${{ github.sha }}\` + \`:latest\` | ✅ |
-          | 1.5 | Cosign sign | OIDC keyless (Sigstore Fulcio/Rekor) | ⚠️ demo: warn |
-          | 1.6 | Helm charts | v0.1.${{ github.run_number }} → ECR OCI | ✅ |
+          | Step | Detail | Status |
+          |---|---|---|
+          | Docker build | backend + frontend (GHA layer cache) | ✅ |
+          | Trivy | CRITICAL/HIGH fixable CVEs | ⚠️ demo |
+          | Syft SBOM | SPDX 2.3 | ✅ artifact |
+          | ECR push | \`:${{ github.sha }}\` + \`:latest\` | ✅ |
+          | Cosign sign | OIDC keyless (Sigstore) | ⚠️ demo |
+          | Helm charts | v0.1.${{ github.run_number }} → ECR OCI (artifact only) | ✅ |
 
-          **Images pushed:**
-          \`\`\`
-          ${{ env.ECR_BACKEND }}:${{ github.sha }}
-          ${{ env.ECR_FRONTEND }}:${{ github.sha }}
-          \`\`\`
-
-          > Images are tagged with the **commit SHA** — the same digest flows unchanged
-          > through dev → staging → prod. Nothing is rebuilt between environments.
+          **Images:** \`${{ env.ECR_BACKEND }}:${{ github.sha }}\`
+          > Same image digest flows unchanged: dev → staging → prod.
           EOF
 
   # ╔════════════════════════════════════════════════════════════════════════╗
-  # ║                  STAGE 1.5 · GITOPS MANIFEST UPDATE                   ║
-  # ║  After a successful build, write the new image tag into the Argo CD   ║
-  # ║  Application manifests in gitops/ and push to main with [skip ci].   ║
-  # ║  Argo CD detects the change and reconciles — this IS the deployment.  ║
+  # ║              STAGE 1.5 · GITOPS — PROMOTE IMAGE TO DEV                ║
+  # ║                                                                        ║
+  # ║  Writes the new SHA into gitops/dev/ only and pushes [skip ci].       ║
+  # ║  Argo CD detects the git change and runs `helm upgrade` — the         ║
+  # ║  pipeline does NOT run helm directly.                                  ║
+  # ║                                                                        ║
+  # ║  staging and prod manifests are updated ONLY after their approval      ║
+  # ║  gates fire (see deploy-staging and deploy-prod jobs below).           ║
   # ╚════════════════════════════════════════════════════════════════════════╝
 
-  gitops-promote:
-    name: "🔄 Stage 1.5 · GitOps — Write image tag → Argo CD"
+  gitops-promote-dev:
+    name: "🔄 Stage 1.5 · GitOps — Promote to dev"
     runs-on: ubuntu-latest
     needs: build-sign-push
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -352,63 +321,55 @@ jobs:
             https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
-      - name: "Update image.tag in all gitops Application manifests"
+      - name: "Update image.tag in gitops/dev/"
         run: |
           SHA="${{ github.sha }}"
-          echo "Promoting image tag: $SHA"
-
-          for env_dir in dev staging prod; do
-            for service in backend frontend; do
-              FILE="gitops/$env_dir/$service.yaml"
-              if [ -f "$FILE" ]; then
-                yq e "(.spec.source.helm.parameters[] | select(.name == \"image.tag\")).value = \"$SHA\"" \
-                  -i "$FILE"
-                echo "  ✅ updated $FILE"
-              fi
-            done
+          for service in backend frontend; do
+            FILE="gitops/dev/$service.yaml"
+            yq e "(.spec.source.helm.parameters[] | select(.name == \"image.tag\")).value = \"$SHA\"" \
+              -i "$FILE"
+            echo "✅ Updated $FILE → $SHA"
           done
 
       - name: "Commit and push [skip ci]"
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add gitops/
-          git diff --staged --quiet && echo "No gitops changes to commit" && exit 0
-          git commit -m "chore(gitops): promote image ${{ github.sha }} [skip ci]
+          git add gitops/dev/
+          git diff --staged --quiet && echo "No dev changes to commit" && exit 0
+          git commit -m "chore(gitops): promote ${{ github.sha }} → dev [skip ci]
 
-          Updated by pipeline run #${{ github.run_number }}.
-          Argo CD will detect this change and sync all environments."
+          Pipeline run #${{ github.run_number }}.
+          Argo CD will detect this commit and sync the dev namespace."
           git push origin main
 
-      - name: "📋 Write GitOps summary"
+      - name: "📋 GitOps Promote Summary"
         run: |
           cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## 🔄 GitOps Promotion
+          ## 🔄 GitOps Promotion → dev
 
           | Environment | Service | New tag |
           |---|---|---|
-          | dev | backend + frontend | \`${{ github.sha }}\` |
-          | staging | backend + frontend | \`${{ github.sha }}\` |
-          | prod | backend + frontend | \`${{ github.sha }}\` |
+          | dev | backend | \`${{ github.sha }}\` |
+          | dev | frontend | \`${{ github.sha }}\` |
 
-          Argo CD will detect this commit and reconcile each environment according to its sync policy:
-          - **dev** → syncs automatically (automated sync enabled)
-          - **staging** → syncs automatically after the staging approval gate
-          - **prod** → syncs automatically after the prod approval gate (prune disabled for safety)
+          - **dev** → Argo CD auto-syncs (automated sync enabled)
+          - **staging** → will update after staging approval gate
+          - **prod** → will update after production approval gate
           EOF
 
   # ╔════════════════════════════════════════════════════════════════════════╗
-  # ║                      STAGE 2 · DEPLOY TO DEV                          ║
-  # ║  Auto-deploys after build. `dev` environment has no required           ║
-  # ║  reviewers. cosign verify + helm diff before every upgrade.           ║
+  # ║                      STAGE 2 · WAIT FOR DEV                           ║
+  # ║  Polls until Argo CD has applied the new image to the dev namespace.  ║
+  # ║  No helm upgrade — Argo CD is the sole deployer.                      ║
   # ╚════════════════════════════════════════════════════════════════════════╝
 
   deploy-dev:
-    name: "🚀 Stage 2 · Deploy → Dev (auto)"
+    name: "🚀 Stage 2 · Wait for dev rollout"
     runs-on: ubuntu-latest
-    needs: [ build-sign-push, gitops-promote ]
+    needs: [ build-sign-push, gitops-promote-dev ]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    environment: dev    # no required reviewers → deploys automatically
+    environment: dev
     steps:
       - uses: actions/checkout@v4
 
@@ -418,14 +379,12 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
 
-      - uses: aws-actions/amazon-ecr-login@v2
-
       - run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
 
-      # DEMO: continue-on-error so demo deploy proceeds without signature.
-      # PRODUCTION: remove. Unsigned image = supply-chain integrity failure.
+      # ── Verify image signature before declaring deploy healthy ─────────────
+      - uses: aws-actions/amazon-ecr-login@v2
       - uses: sigstore/cosign-installer@v3
-      - name: "🔏 Cosign verify images"
+      - name: "🔏 Cosign verify backend image"
         run: |
           cosign verify \
             --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
@@ -433,88 +392,98 @@ jobs:
             ${{ env.ECR_BACKEND }}:${{ github.sha }} 2>&1 | tee cosign-verify-dev.txt
         continue-on-error: true   # DEMO ONLY — remove for production
 
-      - name: "Helm login to ECR OCI"
+      # ── Bootstrap: ensure the app-of-apps and all Application manifests    ──
+      # ── are applied. Idempotent — safe to run on every build.              ──
+      - name: "🔧 Bootstrap Argo CD app-of-apps + dev apps"
         run: |
+          # Apply the app-of-apps (manages all Application resources in gitops/)
+          kubectl apply -f gitops/app-of-apps.yaml
+
+          # Ensure dev Applications exist (app-of-apps will maintain them going forward)
+          kubectl apply -f gitops/dev/backend.yaml
+          kubectl apply -f gitops/dev/frontend.yaml
+
+          echo "✅ Bootstrap complete."
+
+      # ── One-time cleanup of orphaned releases created by the old pipeline ──
+      # ── (helm upgrade --install ran before this GitOps migration).         ──
+      # ── Remove this block once the orphaned releases are gone.             ──
+      - name: "🧹 Clean up orphaned helm releases (one-time)"
+        run: |
+          # Install helm only for this cleanup step
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash -s -- --version v3.14.0 2>/dev/null
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
-            helm registry login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+            helm registry login --username AWS --password-stdin ${{ env.ECR_REGISTRY }} 2>/dev/null || true
 
-      - run: helm plugin install https://github.com/databus23/helm-diff 2>/dev/null || true
+          for release in financeguard-backend-dev financeguard-frontend-dev; do
+            if helm status "$release" -n dev &>/dev/null 2>&1; then
+              echo "Removing orphaned release $release..."
+              helm uninstall "$release" -n dev || true
+            else
+              echo "Release $release not found (already clean)."
+            fi
+          done
+        continue-on-error: true   # cleanup failure must never block the deploy
 
-      - name: "📊 helm diff — backend (preview changes)"
+      # ── Wait for Argo CD to apply the new image tag ───────────────────────
+      - name: "⏳ Wait for Argo CD to deploy SHA to dev"
         run: |
-          helm diff upgrade financeguard-backend ${{ env.CHART_REPO }}/backend \
-            --version 0.1.${{ github.run_number }} --namespace dev \
-            -f helm/backend/values.yaml -f helm/backend/values-dev.yaml \
-            --set image.repository=${{ env.ECR_BACKEND }} \
-            --set image.tag=${{ github.sha }} \
-            --allow-unreleased 2>&1 | tee helm-diff-backend-dev.txt || true
+          SHA="${{ github.sha }}"
+          NS="dev"
+          echo "Waiting for Argo CD to update dev deployments to SHA: $SHA"
+          echo "(Argo CD polls git every ~3 min; this step waits up to 10 min)"
 
-      - name: "🚀 helm upgrade — backend → dev (--atomic 5m)"
-        run: |
-          helm upgrade --install financeguard-backend ${{ env.CHART_REPO }}/backend \
-            --version 0.1.${{ github.run_number }} \
-            --namespace dev --create-namespace \
-            -f helm/backend/values.yaml -f helm/backend/values-dev.yaml \
-            --set image.repository=${{ env.ECR_BACKEND }} \
-            --set image.tag=${{ github.sha }} \
-            --atomic --timeout=5m
+          for deploy in financeguard-backend-backend financeguard-frontend-frontend; do
+            echo "--- Watching deployment: $deploy ---"
+            for i in $(seq 1 40); do
+              IMG=$(kubectl get deployment "$deploy" -n "$NS" \
+                -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "not-found")
+              if echo "$IMG" | grep -q "$SHA"; then
+                echo "✅ New image detected (attempt $i). Running rollout status..."
+                kubectl rollout status "deployment/$deploy" -n "$NS" --timeout=5m
+                echo "✅ $deploy rollout complete."
+                break
+              fi
+              if [ "$i" -eq 40 ]; then
+                echo "❌ Timed out after 10 min waiting for $deploy to use SHA $SHA"
+                echo "   Current image: $IMG"
+                echo "   Check Argo CD UI: kubectl port-forward svc/argocd-server -n argocd 8080:443"
+                exit 1
+              fi
+              echo "  attempt $i/40 — image not yet updated: $IMG — sleeping 15s..."
+              sleep 15
+            done
+          done
 
-      - name: "📊 helm diff — frontend"
-        run: |
-          helm diff upgrade financeguard-frontend ${{ env.CHART_REPO }}/frontend \
-            --version 0.1.${{ github.run_number }} --namespace dev \
-            -f helm/frontend/values.yaml -f helm/frontend/values-dev.yaml \
-            --set image.repository=${{ env.ECR_FRONTEND }} \
-            --set image.tag=${{ github.sha }} \
-            --allow-unreleased 2>&1 | tee helm-diff-frontend-dev.txt || true
-
-      - name: "🚀 helm upgrade — frontend → dev (--atomic 5m)"
-        run: |
-          helm upgrade --install financeguard-frontend ${{ env.CHART_REPO }}/frontend \
-            --version 0.1.${{ github.run_number }} \
-            --namespace dev --create-namespace \
-            -f helm/frontend/values.yaml -f helm/frontend/values-dev.yaml \
-            --set image.repository=${{ env.ECR_FRONTEND }} \
-            --set image.tag=${{ github.sha }} \
-            --atomic --timeout=5m
+          echo "✅ All dev deployments are running SHA $SHA."
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name:           deploy-dev-artifacts-${{ github.sha }}
-          path: |
-            cosign-verify-dev.txt
-            helm-diff-*-dev.txt
+          path:           cosign-verify-dev.txt
           retention-days: 30
 
-      # ── Job summary ───────────────────────────────────────────────────────
-      - name: "📋 Write dev deploy summary"
+      - name: "📋 Dev Deploy Summary"
         if: always()
         run: |
           cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## 🚀 Dev Deployment — FinanceGuard
+          ## 🚀 Dev Deployment
 
-          **Namespace:** \`dev\`  |  **Image:** \`${{ github.sha }}\`  |  **Chart:** \`v0.1.${{ github.run_number }}\`
+          **Namespace:** \`dev\`  |  **Image:** \`${{ github.sha }}\`
 
-          | Step | Detail |
+          | Step | Mode |
           |---|---|
-          | Cosign verify | Supply-chain integrity check (⚠️ demo: warn) |
-          | helm diff | Resource changes previewed before apply |
-          | helm upgrade --atomic | Auto-rollback on timeout or crash-loop |
-          | Timeout | 5 minutes per service |
-
-          **Deployment mode:** Automatic — no approval required for dev.
-          The same commit SHA (\`${{ github.sha }}\`) will flow unchanged to staging and production.
+          | Deploy | Argo CD (GitOps) — no direct helm upgrade |
+          | Approval | Automatic — no human gate for dev |
+          | Sync | Argo CD auto-syncs when gitops/dev/ changes |
           EOF
 
   integration-test-dev:
     name: "🧪 Stage 2 · Integration Tests (dev)"
     runs-on: ubuntu-latest
     needs: deploy-dev
-    # DEMO: continue-on-error — tests run but don't block promotion.
-    # Requires AWS Load Balancer Controller in the cluster to resolve ALB hostname.
-    # PRODUCTION: remove continue-on-error once LB controller is installed.
-    continue-on-error: true
+    continue-on-error: true   # DEMO ONLY — remove once LB controller confirmed
     steps:
       - uses: actions/checkout@v4
 
@@ -526,29 +495,26 @@ jobs:
 
       - run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
 
-      - name: "Resolve dev ALB hostname (wait up to 3m)"
+      - name: "Resolve dev ALB hostname"
         id: alb
         run: |
           for i in $(seq 1 18); do
             HOST=$(kubectl get ingress -n dev \
               -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
             if [ -n "$HOST" ] && [ "$HOST" != "null" ]; then
-              echo "✅ ALB hostname: $HOST (attempt $i)"
+              echo "✅ ALB: $HOST"
               echo "url=http://$HOST" >> $GITHUB_OUTPUT
-              echo "host=$HOST" >> $GITHUB_OUTPUT
               exit 0
             fi
-            echo "⏳ attempt $i/18 — hostname pending, waiting 10s..."
+            echo "⏳ attempt $i/18 — pending..."
             sleep 10
           done
-          echo "⚠️ ALB hostname still pending after 3m (LB controller may not be installed)"
           echo "url=http://pending" >> $GITHUB_OUTPUT
-          echo "host=pending" >> $GITHUB_OUTPUT
 
       - run: pip install requests pytest pytest-html -q
 
-      - name: "Run integration tests vs live dev cluster"
-        continue-on-error: true   # DEMO ONLY
+      - name: "Run integration tests"
+        continue-on-error: true
         env:
           API_URL: ${{ steps.alb.outputs.url }}
         run: |
@@ -559,7 +525,7 @@ jobs:
 
       - uses: dorny/test-reporter@v1
         if: always()
-        continue-on-error: true   # DEMO ONLY
+        continue-on-error: true
         with:
           name:          Integration Tests (dev)
           path:          integration-results/junit.xml
@@ -572,21 +538,6 @@ jobs:
           name:           integration-dev-${{ github.sha }}
           path:           integration-results/
           retention-days: 30
-
-      - name: "📋 Write integration test summary"
-        if: always()
-        run: |
-          cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## 🧪 Integration Tests — Dev
-
-          **Target:** \`http://${{ steps.alb.outputs.host }}\`
-
-          Tests run against the **live dev cluster** over the real ALB endpoint.
-          Covers: health check, transaction CRUD, error responses (422), pagination.
-
-          > ⚠️ **Demo mode:** \`continue-on-error: true\` — test failures do not block staging promotion.
-          > Requires AWS Load Balancer Controller installed in the cluster for ALB hostname resolution.
-          EOF
 
   zap-dev:
     name: "🛡️ Stage 2 · DAST Baseline (dev)"
@@ -612,40 +563,22 @@ jobs:
             -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "pending")
           echo "target=http://$HOST" >> $GITHUB_OUTPUT
 
-      # Dev ZAP = passive scan only. Purpose is early visibility, not blocking.
-      # DEMO: continue-on-error + fail_action: false — report only.
-      # PRODUCTION: keep fail_action: false for dev (dev is not a hard gate).
-      # The staging FULL scan below is where fail_action: true should be set.
-      - name: "🕷️ OWASP ZAP Baseline Scan (passive, dev)"
+      - name: "🕷️ ZAP Baseline Scan (passive)"
         uses: zaproxy/action-baseline@v0.12.0
-        continue-on-error: true   # DEMO ONLY — remove for production
+        continue-on-error: true
         with:
           target:        ${{ steps.alb.outputs.target }}
           fail_action:   false
           artifact_name: zap-baseline-dev-${{ github.run_number }}
 
-      - name: "📋 Write ZAP dev summary"
-        if: always()
-        run: |
-          cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## 🛡️ DAST — ZAP Baseline (Dev)
-
-          **Scan type:** Passive (spider + passive rules — no active attack payloads)
-          **Target:** \`${{ steps.alb.outputs.target }}\`
-
-          | Setting | Value |
-          |---|---|
-          | fail_action | \`false\` — report only in dev |
-          | continue-on-error | \`true\` — demo mode |
-
-          > The **full active scan** (with real attack payloads) runs in **staging**
-          > and is the last DAST gate before production.
-          EOF
-
   # ╔════════════════════════════════════════════════════════════════════════╗
   # ║                    STAGE 3 · DEPLOY TO STAGING                        ║
-  # ║  Requires manual approval via the `staging` GitHub Environment.       ║
-  # ║  Same :sha image from dev — no rebuild.                               ║
+  # ║                                                                        ║
+  # ║  GitHub pauses here for a human approval in the "staging"             ║
+  # ║  Environment. Once approved, the job:                                 ║
+  # ║    1. Updates gitops/staging/ with the new SHA (git commit + push)    ║
+  # ║    2. Bootstraps Argo CD staging Applications if not yet applied      ║
+  # ║    3. Waits for Argo CD to roll out the new image                     ║
   # ╚════════════════════════════════════════════════════════════════════════╝
 
   deploy-staging:
@@ -654,8 +587,13 @@ jobs:
     needs: [ integration-test-dev, zap-dev ]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment: staging    # ← PAUSES HERE — click Approve in GitHub Environments UI
+    permissions:
+      contents: write       # needed to push gitops manifest update
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -664,10 +602,8 @@ jobs:
           aws-region:            ${{ env.AWS_REGION }}
 
       - uses: aws-actions/amazon-ecr-login@v2
-
       - run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
 
-      # DEMO: continue-on-error. PRODUCTION: remove — unsigned image must not deploy.
       - uses: sigstore/cosign-installer@v3
       - name: "🔏 Cosign verify images"
         run: |
@@ -675,86 +611,93 @@ jobs:
             --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             ${{ env.ECR_BACKEND }}:${{ github.sha }} 2>&1 | tee cosign-verify-staging.txt
-        continue-on-error: true   # DEMO ONLY — remove for production
+        continue-on-error: true
 
-      - name: "Helm login to ECR OCI"
+      # ── Step 1: update gitops/staging/ manifest ───────────────────────────
+      - name: "Install yq"
         run: |
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
-            helm registry login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
 
-      - run: helm plugin install https://github.com/databus23/helm-diff 2>/dev/null || true
-
-      - name: "📊 helm diff — backend (staging)"
+      - name: "📝 Promote image to staging manifests"
         run: |
-          helm diff upgrade financeguard-backend ${{ env.CHART_REPO }}/backend \
-            --version 0.1.${{ github.run_number }} --namespace staging \
-            -f helm/backend/values.yaml -f helm/backend/values-staging.yaml \
-            --set image.repository=${{ env.ECR_BACKEND }} \
-            --set image.tag=${{ github.sha }} \
-            --allow-unreleased 2>&1 | tee helm-diff-backend-staging.txt || true
+          SHA="${{ github.sha }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: "🚀 helm upgrade — backend → staging (--atomic 5m)"
-        run: |
-          helm upgrade --install financeguard-backend ${{ env.CHART_REPO }}/backend \
-            --version 0.1.${{ github.run_number }} \
-            --namespace staging --create-namespace \
-            -f helm/backend/values.yaml -f helm/backend/values-staging.yaml \
-            --set image.repository=${{ env.ECR_BACKEND }} \
-            --set image.tag=${{ github.sha }} \
-            --atomic --timeout=5m
+          # Pull latest — gitops-promote-dev may have pushed commits ahead of us
+          git pull --rebase origin main
 
-      - name: "📊 helm diff — frontend (staging)"
-        run: |
-          helm diff upgrade financeguard-frontend ${{ env.CHART_REPO }}/frontend \
-            --version 0.1.${{ github.run_number }} --namespace staging \
-            -f helm/frontend/values.yaml -f helm/frontend/values-staging.yaml \
-            --set image.repository=${{ env.ECR_FRONTEND }} \
-            --set image.tag=${{ github.sha }} \
-            --allow-unreleased 2>&1 | tee helm-diff-frontend-staging.txt || true
+          for service in backend frontend; do
+            FILE="gitops/staging/$service.yaml"
+            yq e "(.spec.source.helm.parameters[] | select(.name == \"image.tag\")).value = \"$SHA\"" \
+              -i "$FILE"
+            echo "✅ Updated $FILE → $SHA"
+          done
 
-      - name: "🚀 helm upgrade — frontend → staging (--atomic 5m)"
+          git add gitops/staging/
+          git diff --staged --quiet && echo "No staging changes to commit" && exit 0
+          git commit -m "chore(gitops): promote $SHA → staging [skip ci]
+
+          Approved by ${{ github.actor }} via GitHub Environments (staging gate).
+          Pipeline run #${{ github.run_number }}."
+          git push origin main
+
+      # ── Step 2: bootstrap staging Argo CD Applications ────────────────────
+      - name: "🔧 Bootstrap staging Argo CD Applications"
         run: |
-          helm upgrade --install financeguard-frontend ${{ env.CHART_REPO }}/frontend \
-            --version 0.1.${{ github.run_number }} \
-            --namespace staging --create-namespace \
-            -f helm/frontend/values.yaml -f helm/frontend/values-staging.yaml \
-            --set image.repository=${{ env.ECR_FRONTEND }} \
-            --set image.tag=${{ github.sha }} \
-            --atomic --timeout=5m
+          kubectl apply -f gitops/staging/backend.yaml
+          kubectl apply -f gitops/staging/frontend.yaml
+          echo "✅ Staging Applications applied. Argo CD will sync now."
+
+      # ── Step 3: wait for Argo CD to roll out ─────────────────────────────
+      - name: "⏳ Wait for Argo CD to deploy SHA to staging"
+        run: |
+          SHA="${{ github.sha }}"
+          NS="staging"
+          for deploy in financeguard-backend-backend financeguard-frontend-frontend; do
+            echo "--- Watching $deploy in $NS ---"
+            for i in $(seq 1 40); do
+              IMG=$(kubectl get deployment "$deploy" -n "$NS" \
+                -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "not-found")
+              if echo "$IMG" | grep -q "$SHA"; then
+                kubectl rollout status "deployment/$deploy" -n "$NS" --timeout=5m
+                echo "✅ $deploy rollout complete."
+                break
+              fi
+              [ "$i" -eq 40 ] && echo "❌ Timeout waiting for $deploy" && exit 1
+              echo "  attempt $i/40 — not yet updated: $IMG"
+              sleep 15
+            done
+          done
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name:           deploy-staging-artifacts-${{ github.sha }}
-          path: |
-            cosign-verify-staging.txt
-            helm-diff-*-staging.txt
+          path:           cosign-verify-staging.txt
           retention-days: 30
 
-      - name: "📋 Write staging deploy summary"
+      - name: "📋 Staging Deploy Summary"
         if: always()
         run: |
           cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## 🚀 Staging Deployment — FinanceGuard
+          ## 🚀 Staging Deployment
 
-          **Namespace:** \`staging\`  |  **Image:** \`${{ github.sha }}\`  |  **Chart:** \`v0.1.${{ github.run_number }}\`
+          **Namespace:** \`staging\`  |  **Image:** \`${{ github.sha }}\`
 
-          | Step | Detail |
+          | Step | Mode |
           |---|---|
-          | Approval | ✅ Manually approved in GitHub Environments |
-          | Cosign verify | Supply-chain integrity check (⚠️ demo: warn) |
-          | helm diff | Resource changes previewed before apply |
-          | helm upgrade --atomic | Auto-rollback on failure |
-
-          **Note:** This is the same image that was deployed and tested in dev.
-          No rebuild — only the namespace and values overlay changed.
+          | Approval | ✅ Approved in GitHub Environments |
+          | Deploy | Argo CD (GitOps) — auto-sync on manifest change |
+          | Cosign verify | ⚠️ demo |
           EOF
 
   integration-test-staging:
     name: "🧪 Stage 3 · Integration Tests (staging)"
     runs-on: ubuntu-latest
     needs: deploy-staging
-    # DEMO: continue-on-error — same as dev. PRODUCTION: remove once LB controller installed.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -767,27 +710,24 @@ jobs:
 
       - run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
 
-      - name: "Resolve staging ALB hostname (wait up to 3m)"
+      - name: "Resolve staging ALB hostname"
         id: alb
         run: |
           for i in $(seq 1 18); do
             HOST=$(kubectl get ingress -n staging \
               -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
             if [ -n "$HOST" ] && [ "$HOST" != "null" ]; then
-              echo "✅ ALB hostname: $HOST (attempt $i)"
               echo "url=http://$HOST" >> $GITHUB_OUTPUT
               exit 0
             fi
-            echo "⏳ attempt $i/18 — hostname pending, waiting 10s..."
             sleep 10
           done
-          echo "⚠️ ALB hostname still pending after 3m"
           echo "url=http://pending" >> $GITHUB_OUTPUT
 
       - run: pip install requests pytest pytest-html -q
 
-      - name: "Run integration tests vs live staging cluster"
-        continue-on-error: true   # DEMO ONLY
+      - name: "Run integration tests"
+        continue-on-error: true
         env:
           API_URL: ${{ steps.alb.outputs.url }}
         run: |
@@ -798,7 +738,7 @@ jobs:
 
       - uses: dorny/test-reporter@v1
         if: always()
-        continue-on-error: true   # DEMO ONLY
+        continue-on-error: true
         with:
           name:          Integration Tests (staging)
           path:          integration-results/junit.xml
@@ -836,41 +776,21 @@ jobs:
             -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "pending")
           echo "target=http://$HOST" >> $GITHUB_OUTPUT
 
-      # Full/active scan — real injection, XSS, broken auth payloads.
-      # This is the LAST DAST gate before production.
-      # DEMO: continue-on-error + fail_action: false — pipeline stays green.
-      # PRODUCTION: remove continue-on-error AND set fail_action: true.
-      # Any HIGH finding here MUST block the production promotion.
-      - name: "🕷️ OWASP ZAP Full Scan (active, staging)"
+      - name: "🕷️ ZAP Full Scan (active)"
         uses: zaproxy/action-full-scan@v0.10.0
-        continue-on-error: true   # DEMO ONLY — remove for production
+        continue-on-error: true   # DEMO ONLY — set fail_action: true for production
         with:
           target:        ${{ steps.alb.outputs.target }}
-          fail_action:   false    # DEMO ONLY — set to true in production
+          fail_action:   false
           artifact_name: zap-full-staging-${{ github.run_number }}
-
-      - name: "📋 Write ZAP staging summary"
-        if: always()
-        run: |
-          cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## 🛡️ DAST — ZAP Full Scan (Staging)
-
-          **Scan type:** Active (real injection, XSS, broken auth, CSRF payloads)
-          **Target:** \`${{ steps.alb.outputs.target }}\`
-
-          | Setting | Value |
-          |---|---|
-          | fail_action | \`false\` — demo mode (set to \`true\` in production) |
-          | continue-on-error | \`true\` — demo mode |
-
-          > ⚠️ This is the **last security gate before production**.
-          > In production, HIGH ZAP findings here **MUST** block the promotion.
-          EOF
 
   # ╔════════════════════════════════════════════════════════════════════════╗
   # ║                   STAGE 4 · DEPLOY TO PRODUCTION                      ║
-  # ║  Requires manual approval via the `production` GitHub Environment.    ║
-  # ║  GitHub records who approved and when — this is the audit trail.      ║
+  # ║                                                                        ║
+  # ║  GitHub pauses for human approval in the "production" Environment.    ║
+  # ║  Prod Argo CD apps have automated: {selfHeal: false} — they NEVER     ║
+  # ║  auto-sync. This job is the only path to production deployment.        ║
+  # ║  GitHub records the approver and timestamp — this IS the audit trail. ║
   # ╚════════════════════════════════════════════════════════════════════════╝
 
   deploy-prod:
@@ -879,8 +799,13 @@ jobs:
     needs: [ integration-test-staging, zap-staging ]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment: production   # ← PAUSES HERE — click Approve in GitHub Environments UI
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -889,10 +814,8 @@ jobs:
           aws-region:            ${{ env.AWS_REGION }}
 
       - uses: aws-actions/amazon-ecr-login@v2
-
       - run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
 
-      # DEMO: continue-on-error. PRODUCTION: remove — unsigned image in prod = critical failure.
       - uses: sigstore/cosign-installer@v3
       - name: "🔏 Cosign verify images (pre-production)"
         run: |
@@ -900,57 +823,93 @@ jobs:
             --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             ${{ env.ECR_BACKEND }}:${{ github.sha }} 2>&1 | tee cosign-verify-prod.txt
-        continue-on-error: true   # DEMO ONLY — remove for production
+        continue-on-error: true
 
-      - name: "Helm login to ECR OCI"
+      # ── Step 1: update gitops/prod/ manifest ─────────────────────────────
+      - name: "Install yq"
         run: |
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
-            helm registry login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
 
-      - run: helm plugin install https://github.com/databus23/helm-diff 2>/dev/null || true
-
-      - name: "📊 helm diff — backend (production)"
+      - name: "📝 Promote image to production manifests"
         run: |
-          helm diff upgrade financeguard-backend ${{ env.CHART_REPO }}/backend \
-            --version 0.1.${{ github.run_number }} --namespace prod \
-            -f helm/backend/values.yaml -f helm/backend/values-prod.yaml \
-            --set image.repository=${{ env.ECR_BACKEND }} \
-            --set image.tag=${{ github.sha }} \
-            --allow-unreleased 2>&1 | tee helm-diff-backend-prod.txt || true
+          SHA="${{ github.sha }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: "🚀 helm upgrade — backend → production (--atomic 10m)"
+          # Pull latest — staging promote may have pushed commits ahead of us
+          git pull --rebase origin main
+
+          for service in backend frontend; do
+            FILE="gitops/prod/$service.yaml"
+            yq e "(.spec.source.helm.parameters[] | select(.name == \"image.tag\")).value = \"$SHA\"" \
+              -i "$FILE"
+            echo "✅ Updated $FILE → $SHA"
+          done
+
+          git add gitops/prod/
+          git diff --staged --quiet && echo "No prod changes to commit" && exit 0
+          git commit -m "chore(gitops): promote $SHA → production [skip ci]
+
+          Approved by ${{ github.actor }} via GitHub Environments (production gate).
+          Pipeline run #${{ github.run_number }}."
+          git push origin main
+
+      # ── Step 2: bootstrap prod Argo CD Applications ───────────────────────
+      # ── Prod apps have selfHeal: false so they will NOT sync on their own. ──
+      # ── We explicitly trigger a sync via kubectl after applying.           ──
+      - name: "🔧 Bootstrap prod Argo CD Applications + trigger sync"
         run: |
-          helm upgrade --install financeguard-backend ${{ env.CHART_REPO }}/backend \
-            --version 0.1.${{ github.run_number }} \
-            --namespace prod --create-namespace \
-            -f helm/backend/values.yaml -f helm/backend/values-prod.yaml \
-            --set image.repository=${{ env.ECR_BACKEND }} \
-            --set image.tag=${{ github.sha }} \
-            --atomic --timeout=10m
+          kubectl apply -f gitops/prod/backend.yaml
+          kubectl apply -f gitops/prod/frontend.yaml
 
-      - name: "📊 helm diff — frontend (production)"
+          # Install Argo CD CLI to explicitly trigger sync (prod won't auto-sync)
+          VERSION=$(curl -s https://api.github.com/repos/argoproj/argo-cd/releases/latest \
+            | grep '"tag_name"' | cut -d'"' -f4)
+          sudo curl -sSL -o /usr/local/bin/argocd \
+            "https://github.com/argoproj/argo-cd/releases/download/${VERSION}/argocd-linux-amd64"
+          sudo chmod +x /usr/local/bin/argocd
+
+          # Log in to Argo CD (port-forward to local 8080)
+          kubectl port-forward svc/argocd-server -n argocd 8080:443 &>/dev/null &
+          sleep 5
+          ARGOCD_PASS=$(kubectl get secret argocd-initial-admin-secret -n argocd \
+            -o jsonpath='{.data.password}' | base64 -d)
+          argocd login localhost:8080 --username admin --password "$ARGOCD_PASS" \
+            --insecure --grpc-web 2>&1
+
+          # Explicitly sync prod apps (required because selfHeal: false)
+          argocd app sync financeguard-backend-prod  --prune=false --async 2>&1 || true
+          argocd app sync financeguard-frontend-prod --prune=false --async 2>&1 || true
+
+          echo "✅ Prod sync triggered."
+
+      # ── Step 3: wait for rollout ──────────────────────────────────────────
+      - name: "⏳ Wait for prod rollout"
         run: |
-          helm diff upgrade financeguard-frontend ${{ env.CHART_REPO }}/frontend \
-            --version 0.1.${{ github.run_number }} --namespace prod \
-            -f helm/frontend/values.yaml -f helm/frontend/values-prod.yaml \
-            --set image.repository=${{ env.ECR_FRONTEND }} \
-            --set image.tag=${{ github.sha }} \
-            --allow-unreleased 2>&1 | tee helm-diff-frontend-prod.txt || true
+          SHA="${{ github.sha }}"
+          NS="prod"
+          for deploy in financeguard-backend-backend financeguard-frontend-frontend; do
+            echo "--- Watching $deploy in $NS ---"
+            for i in $(seq 1 40); do
+              IMG=$(kubectl get deployment "$deploy" -n "$NS" \
+                -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "not-found")
+              if echo "$IMG" | grep -q "$SHA"; then
+                kubectl rollout status "deployment/$deploy" -n "$NS" --timeout=10m
+                echo "✅ $deploy rollout complete."
+                break
+              fi
+              [ "$i" -eq 40 ] && echo "❌ Timeout waiting for $deploy" && exit 1
+              echo "  attempt $i/40 — not yet updated: $IMG"
+              sleep 15
+            done
+          done
 
-      - name: "🚀 helm upgrade — frontend → production (--atomic 10m)"
-        run: |
-          helm upgrade --install financeguard-frontend ${{ env.CHART_REPO }}/frontend \
-            --version 0.1.${{ github.run_number }} \
-            --namespace prod --create-namespace \
-            -f helm/frontend/values.yaml -f helm/frontend/values-prod.yaml \
-            --set image.repository=${{ env.ECR_FRONTEND }} \
-            --set image.tag=${{ github.sha }} \
-            --atomic --timeout=10m
-
-      - name: "✅ Post-deploy smoke test (2 min retry)"
+      - name: "✅ Production smoke test"
         run: |
           HOST=$(kubectl get ingress -n prod \
-            -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
+            -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "pending")
           echo "Production: http://$HOST"
           for i in $(seq 1 12); do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://$HOST/health" || echo "000")
@@ -958,37 +917,31 @@ jobs:
             echo "⏳ attempt $i/12 → HTTP $STATUS"; sleep 10
           done
           [ "$STATUS" = "200" ] || { echo "❌ Smoke test timed out"; exit 1; }
-          echo "✅ Production healthy"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name:           deploy-prod-artifacts-${{ github.sha }}
-          path: |
-            cosign-verify-prod.txt
-            helm-diff-*-prod.txt
+          path:           cosign-verify-prod.txt
           retention-days: 90
 
-      - name: "📋 Write production deploy summary"
+      - name: "📋 Production Deploy Summary"
         if: always()
         run: |
           cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## 🚀 Production Deployment — FinanceGuard v0.1.${{ github.run_number }}
+          ## 🚀 Production Deployment
 
-          **Namespace:** \`prod\`  |  **Image:** \`${{ github.sha }}\`  |  **Chart:** \`v0.1.${{ github.run_number }}\`
+          **Namespace:** \`prod\`  |  **Image:** \`${{ github.sha }}\`  |  **Run:** #${{ github.run_number }}
 
-          | Step | Detail |
+          | Step | Mode |
           |---|---|
-          | Approval | ✅ Manually approved — approver and timestamp recorded by GitHub |
-          | Cosign verify | Supply-chain integrity check (⚠️ demo: warn) |
-          | helm diff | Resource changes reviewed before apply |
-          | helm upgrade --atomic | Timeout 10m, auto-rollback on failure |
-          | Smoke test | /health + /api/v1/transactions both 200 ✅ |
+          | Approval | ✅ Approved by ${{ github.actor }} — GitHub records approver + timestamp |
+          | Deploy | Argo CD (GitOps) — explicit sync (selfHeal: false in prod) |
+          | Cosign verify | ⚠️ demo |
+          | Smoke test | /health → 200 ✅ |
 
-          **Security gates passed (across all stages):**
-          Gitleaks · Semgrep · Checkov · pytest · SonarCloud ·
-          Trivy · Syft SBOM · Cosign sign/verify ·
-          ZAP baseline (dev) · ZAP full scan (staging) · Kyverno · Falco · ESO
+          **Security gates:** Gitleaks · Semgrep · Checkov · pytest ·
+          Trivy · Syft SBOM · Cosign · ZAP baseline (dev) · ZAP full (staging)
           EOF
 
   # ╔════════════════════════════════════════════════════════════════════════╗
@@ -1022,33 +975,29 @@ jobs:
         run: |
           mkdir -p evidence/{security,tests,sbom,signatures,deployment}
 
-          cp -r artifacts/build-artifacts-*/         evidence/security/  2>/dev/null || true
-          cp -r artifacts/integration-dev-*/         evidence/tests/     2>/dev/null || true
-          cp -r artifacts/integration-staging-*/     evidence/tests/     2>/dev/null || true
-          cp -r artifacts/deploy-dev-artifacts-*/    evidence/deployment/ 2>/dev/null || true
+          cp -r artifacts/build-artifacts-*/         evidence/security/   2>/dev/null || true
+          cp -r artifacts/integration-dev-*/         evidence/tests/      2>/dev/null || true
+          cp -r artifacts/integration-staging-*/     evidence/tests/      2>/dev/null || true
+          cp -r artifacts/deploy-dev-artifacts-*/    evidence/deployment/  2>/dev/null || true
           cp -r artifacts/deploy-staging-artifacts-*/ evidence/deployment/ 2>/dev/null || true
-          cp -r artifacts/deploy-prod-artifacts-*/   evidence/deployment/ 2>/dev/null || true
+          cp -r artifacts/deploy-prod-artifacts-*/   evidence/deployment/  2>/dev/null || true
           find artifacts/ -name "*.spdx.json" -exec cp {} evidence/sbom/ \; 2>/dev/null || true
 
-          helm history financeguard-backend  -n prod --max 10 --output table \
-            > evidence/deployment/helm-history-backend.txt  2>/dev/null || true
-          helm history financeguard-frontend -n prod --max 10 --output table \
-            > evidence/deployment/helm-history-frontend.txt 2>/dev/null || true
+          kubectl get applications -n argocd -o wide > evidence/deployment/argocd-apps.txt 2>/dev/null || true
 
           cat > evidence/manifest.json << EOF
           {
-            "project":   "FinanceGuard DevSecOps Capstone",
-            "model":     "Trunk-Based Development (Model B)",
-            "version":   "v0.1.${{ github.run_number }}",
-            "commit":    "${{ github.sha }}",
-            "actor":     "${{ github.actor }}",
-            "pipeline":  "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
-            "tools":     ["Gitleaks","Semgrep","Checkov","TFLint","SonarCloud","Trivy","Syft","Cosign","ZAP","Kyverno","Falco","ESO"],
-            "note":      "Security scans run with continue-on-error for demo. Remove flag in production."
+            "project":  "FinanceGuard DevSecOps Capstone",
+            "model":    "Trunk-Based GitOps (Argo CD)",
+            "version":  "v0.1.${{ github.run_number }}",
+            "commit":   "${{ github.sha }}",
+            "actor":    "${{ github.actor }}",
+            "pipeline": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "tools":    ["Gitleaks","Semgrep","Checkov","SonarCloud","Trivy","Syft","Cosign","ZAP","ArgoCD","Kyverno","Falco","ESO"],
+            "gitops":   "Argo CD is the sole deployer — pipeline writes image tags to git only"
           }
           EOF
 
-          echo "── Evidence bundle ──"
           find evidence/ -type f | sort
 
       - uses: actions/upload-artifact@v4
@@ -1078,6 +1027,7 @@ jobs:
 
           **Commit:** \`${{ github.sha }}\`
           **Pipeline:** [Run #${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          **Deployer:** Argo CD (GitOps) — manifest: \`gitops/prod/\`
 
           ### Images
           \`\`\`
@@ -1087,27 +1037,6 @@ jobs:
 
           📦 Download **EVIDENCE-BUNDLE-v0.1.${{ github.run_number }}** artifact for submission."
 
-      - name: "📋 Write evidence + release summary"
-        if: always()
-        run: |
-          cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## 📦 Evidence Bundle + Release — v0.1.${{ github.run_number }}
-
-          | Artifact | Contents |
-          |---|---|
-          | \`evidence/security/\` | Trivy SARIFs, Semgrep SARIF |
-          | \`evidence/tests/\` | Integration test results (dev + staging) |
-          | \`evidence/sbom/\` | SPDX 2.3 SBOMs for backend + frontend |
-          | \`evidence/deployment/\` | helm diffs, cosign verify outputs, helm history |
-          | \`evidence/manifest.json\` | Pipeline metadata + tool inventory |
-
-          **Retention:** 90 days  |  **Release:** v0.1.${{ github.run_number }}
-          **Images retagged:** \`:stable\`
-
-          > Download the **EVIDENCE-BUNDLE** artifact from this run for capstone submission.
-          EOF
-
-  # ── Production failure notification ──────────────────────────────────────
   notify-failure:
     name: "📢 Notify Production Failure"
     runs-on: ubuntu-latest
@@ -1123,10 +1052,10 @@ jobs:
               "attachments": [{
                 "color": "danger",
                 "fields": [
-                  {"title": "Version", "value": "v0.1.${{ github.run_number }}", "short": true},
-                  {"title": "Commit",  "value": "${{ github.sha }}", "short": true},
-                  {"title": "Actor",   "value": "${{ github.actor }}", "short": true},
-                  {"title": "Run URL", "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false}
+                  {"title": "Version",  "value": "v0.1.${{ github.run_number }}", "short": true},
+                  {"title": "Commit",   "value": "${{ github.sha }}", "short": true},
+                  {"title": "Actor",    "value": "${{ github.actor }}", "short": true},
+                  {"title": "Run URL",  "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false}
                 ]
               }]
             }

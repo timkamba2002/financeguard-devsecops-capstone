@@ -12,6 +12,7 @@ spec:
     targetRevision: main
     path: helm/backend
     helm:
+      releaseName: financeguard-backend
       valueFiles:
         - values.yaml
         - values-prod.yaml
@@ -22,8 +23,12 @@ spec:
     server: https://kubernetes.default.svc
     namespace: prod
   syncPolicy:
+    # Production: NO automated sync and NO self-heal.
+    # The pipeline triggers sync explicitly after the prod approval gate fires.
+    # This prevents any git push — even an accidental one — from immediately
+    # deploying to production without a human sign-off in GitHub Environments.
     automated:
-      prune: false # prod: never auto-prune — manual confirmation required
-      selfHeal: true
+      prune: false      # never delete prod resources
+      selfHeal: false   # don't auto-correct drift — human decides
     syncOptions:
       - CreateNamespace=true

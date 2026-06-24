@@ -12,6 +12,7 @@ spec:
     targetRevision: main
     path: helm/frontend
     helm:
+      releaseName: financeguard-frontend
       valueFiles:
         - values.yaml
         - values-prod.yaml
@@ -23,7 +24,7 @@ spec:
     namespace: prod
   syncPolicy:
     automated:
-      prune: false # prod: never auto-prune
-      selfHeal: true
+      prune: false
+      selfHeal: false
     syncOptions:
       - CreateNamespace=true

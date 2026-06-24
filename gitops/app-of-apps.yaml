@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: financeguard-apps
+  namespace: argocd
+  annotations:
+    # Bootstrap with: kubectl apply -f gitops/app-of-apps.yaml
+    # After bootstrapping, Argo CD watches this directory and keeps all six
+    # Application resources (dev/staging/prod × backend/frontend) in sync.
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/timkamba2002/financeguard-devsecops-capstone.git
+    targetRevision: main
+    path: gitops
+    directory:
+      recurse: true
+      # Only pick up the explicit Application manifests; skip kustomization files.
+      include: "{dev,staging,prod}/{backend,frontend}.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true       # remove Application resources deleted from git
+      selfHeal: true    # re-apply if manually modified in cluster
+    syncOptions:
+      - CreateNamespace=true

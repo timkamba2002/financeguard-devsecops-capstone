@@ -5,7 +5,9 @@ image:
   pullPolicy: Always
 
 env:
-  VITE_API_BASE_URL: "https://api.financeguard.io"
+  # After first deploy, run: kubectl get ingress -n prod -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'
+  # For production, consider registering a real domain via Route53 and using HTTPS.
+  BACKEND_API_URL: "https://PROD_BACKEND_ALB_REPLACE_AFTER_FIRST_DEPLOY"
 
 resources:
   limits:

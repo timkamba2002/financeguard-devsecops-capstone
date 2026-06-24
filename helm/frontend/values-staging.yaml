@@ -13,4 +13,6 @@ ingress:
   enabled: true
 
 env:
-  VITE_API_BASE_URL: "http://api.staging.financeguard.local"
+  # After first deploy, run: kubectl get ingress -n staging -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'
+  # then update this value and re-run the pipeline or commit the change.
+  BACKEND_API_URL: "http://STAGING_BACKEND_ALB_REPLACE_AFTER_FIRST_DEPLOY"

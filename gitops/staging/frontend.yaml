@@ -12,6 +12,7 @@ spec:
     targetRevision: main
     path: helm/frontend
     helm:
+      releaseName: financeguard-frontend
       valueFiles:
         - values.yaml
         - values-staging.yaml

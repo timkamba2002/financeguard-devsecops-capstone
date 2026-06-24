@@ -1013,8 +1013,12 @@ jobs:
               --repository-name "$img" \
               --image-ids imageTag=${{ github.sha }} \
               --query 'images[0].imageManifest' --output text)
-            aws ecr put-image --region ${{ env.AWS_REGION }} \
-              --repository-name "$img" --image-tag stable --image-manifest "$M"
+            OUTPUT=$(aws ecr put-image --region ${{ env.AWS_REGION }} \
+              --repository-name "$img" --image-tag stable --image-manifest "$M" 2>&1) && \
+              echo "✅ $img tagged :stable" || \
+              { echo "$OUTPUT" | grep -q "ImageAlreadyExistsException" && \
+                echo "✅ $img :stable already points to this digest — skipping" || \
+                { echo "❌ $img retag failed: $OUTPUT"; exit 1; }; }
           done
 
       - name: "🏷️ Create GitHub Release"
@@ -1038,26 +1042,39 @@ jobs:
           📦 Download **EVIDENCE-BUNDLE-v0.1.${{ github.run_number }}** artifact for submission."
 
   notify-failure:
-    name: "📢 Notify Production Failure"
+    name: "📢 Notify Pipeline Failure"
     runs-on: ubuntu-latest
     needs: [ deploy-prod, evidence-release ]
     if: always() && (needs.deploy-prod.result == 'failure' || needs.evidence-release.result == 'failure')
     steps:
-      - uses: slackapi/slack-github-action@v1.26.0
+      # GitHub automatically emails the commit author when this job fails.
+      # We intentionally fail this job so that built-in GitHub email
+      # notifications fire — no external webhook needed.
+      - name: "Report failure details"
+        run: |
+          echo "## ❌ FinanceGuard Pipeline Failure" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | v0.1.${{ github.run_number }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Actor | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| deploy-prod | ${{ needs.deploy-prod.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| evidence-release | ${{ needs.evidence-release.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Run | ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo ""
+          echo "❌ Pipeline failed — see summary above."
+          exit 1    # triggers GitHub's built-in email to the commit author
+
+      # Optional: Slack webhook — only fires if SLACK_WEBHOOK_URL secret is set.
+      - name: "Slack notification (optional)"
+        if: always() && env.SLACK_WEBHOOK_URL != ''
+        uses: slackapi/slack-github-action@v1.26.0
         continue-on-error: true
         with:
           payload: |
             {
-              "text": "❌ *FinanceGuard production deployment FAILED*",
-              "attachments": [{
-                "color": "danger",
-                "fields": [
-                  {"title": "Version",  "value": "v0.1.${{ github.run_number }}", "short": true},
-                  {"title": "Commit",   "value": "${{ github.sha }}", "short": true},
-                  {"title": "Actor",    "value": "${{ github.actor }}", "short": true},
-                  {"title": "Run URL",  "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false}
-                ]
-              }]
+              "text": "❌ *FinanceGuard pipeline FAILED* — v0.1.${{ github.run_number }} | <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
             }
         env:
           SLACK_WEBHOOK_URL:  ${{ secrets.SLACK_WEBHOOK_URL }}

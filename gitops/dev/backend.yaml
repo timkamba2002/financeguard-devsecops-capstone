@@ -22,7 +22,7 @@ spec:
         # Image tag — updated by the CI/CD pipeline after every successful build.
         # Argo CD detects this change in git and triggers a helm upgrade automatically.
         - name: image.tag
-          value: "d61432fe2c5a1a30d70760e757a7f3acbf64df7e"
+          value: "0fb51a8687c9c6f5f67eeeaacab668dde7b146c5"
   destination:
     server: https://kubernetes.default.svc
     namespace: dev

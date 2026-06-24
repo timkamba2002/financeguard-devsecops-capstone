@@ -11,3 +11,14 @@ pytest==8.2.2
 pytest-asyncio==0.23.7
 python-multipart==0.0.9
 alembic==1.13.1
+
+# ── OpenTelemetry ─────────────────────────────────────────────────────────────
+# Core API + SDK (providers, processors, resources)
+opentelemetry-api>=1.25.0
+opentelemetry-sdk>=1.25.0
+# OTLP gRPC exporter — sends traces, metrics, and logs to the sidecar on :4317
+opentelemetry-exporter-otlp-proto-grpc>=1.25.0
+# Auto-instrumentation — patches FastAPI, SQLAlchemy, and stdlib logging
+opentelemetry-instrumentation-fastapi>=0.46b0
+opentelemetry-instrumentation-sqlalchemy>=0.46b0
+opentelemetry-instrumentation-logging>=0.46b0

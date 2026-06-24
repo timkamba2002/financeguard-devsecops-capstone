@@ -150,18 +150,18 @@ Three signals:
   - Correlation: trace IDs embedded in logs allow jumping from a log line to a trace waterfall (Tempo) in Grafana.
 
 Grafana dashboards (live links)
-- FinanceGuard Overview: http://k8s-monitori-promethe-edbf634ada-1678049100.us-east-1.el.amazonaws.com/d/financeguard-overview
+- FinanceGuard Overview: http://k8s-monitori-promethe-edbf634ada-1678049100.us-east-1.elb.amazonaws.com/d/financeguard-overview
 
 ![Grafana Overview](docs/screenshots/04-grafana-overview.png)
 *Figure: FinanceGuard Overview dashboard with pod counts, request rate, and transaction metrics.*
 
-- Logs Explorer: http://k8s-monitori-promethe-edbf634ada-1678049100.us-east-1.el.amazonaws.com/explore
+- Logs Explorer: http://k8s-monitori-promethe-edbf634ada-1678049100.us-east-1.elb.amazonaws.com/explore
 
 ![Grafana Logs](docs/screenshots/05-grafana-logs.png)
 *Figure: Logs Explorer showing structured JSON logs with correlated trace IDs and severity filtering.*
 
-- Traces / Tempo: http://k8s-monitori-promethe-edbf634ada-1678049100.us-east-1.el.amazonaws.com/explore?tab=traces
-- Grafana root / dashboards: http://k8s-monitori-promethe-edbf634ada-1678049100.us-east-1.el.amazonaws.com/dashboards
+- Traces / Tempo: http://k8s-monitori-promethe-edbf634ada-1678049100.us-east-1.elb.amazonaws.com/explore?tab=traces
+- Grafana root / dashboards: http://k8s-monitori-promethe-edbf634ada-1678049100.us-east-1.elb.amazonaws.com/dashboards
 
 Security approach
 -----------------
@@ -270,9 +270,9 @@ Recommended next steps to move from demo to production-ready:
 Appendix — quick references
 ---------------------------
 - Frontend URLs:
-  - Dev: http://k8s-dev-financeg-4854460a1f-1613697042.us-east-1.el.amazonaws.com
-  - Staging: http://k8s-staging-financeg-4dea2db5a2-1371325497.us-east-1.el.amazonaws.com
-  - Prod: http://k8s-prod-financeg-6fa9951b70-799874628.us-east-1.el.amazonaws.com
+  - Dev: http://k8s-dev-financeg-4854460a1f-1613697042.us-east-1.elb.amazonaws.com
+  - Staging: http://k8s-staging-financeg-4dea2db5a2-1371325497.us-east-1.elb.amazonaws.com
+  - Prod: http://k8s-prod-financeg-6fa9951b70-799874628.us-east-1.elb.amazonaws.com
 
 - Grafana:
   - Root dashboards: http://k8s-monitori-promethe-edbf634ada-1678049100.us-east-1.elb.amazonaws.com/dashboards

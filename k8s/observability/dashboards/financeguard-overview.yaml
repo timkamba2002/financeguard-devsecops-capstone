@@ -14,7 +14,7 @@ data:
       "timezone": "browser",
       "schemaVersion": 38,
       "refresh": "30s",
-      "time": { "from": "now-1h", "to": "now" },
+      "time": { "from": "now-3h", "to": "now" },
       "panels": [
 
         {
@@ -200,16 +200,79 @@ data:
         },
 
         {
+          "id": 20, "type": "row",
+          "title": "📊 Application Metrics (OTel)",
+          "gridPos": { "x": 0, "y": 14, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+
+        {
+          "id": 21, "type": "stat",
+          "title": "Transactions Created (total)",
+          "gridPos": { "x": 0, "y": 15, "w": 6, "h": 4 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background", "graphMode": "area"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+            }
+          },
+          "targets": [{
+            "expr": "sum(financeguard_transactions_created_total)",
+            "legendFormat": "Total"
+          }]
+        },
+
+        {
+          "id": 22, "type": "stat",
+          "title": "HTTP Requests (total)",
+          "gridPos": { "x": 6, "y": 15, "w": 6, "h": 4 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background", "graphMode": "area"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+            }
+          },
+          "targets": [{
+            "expr": "sum(financeguard_http_requests_total)",
+            "legendFormat": "Total"
+          }]
+        },
+
+        {
+          "id": 23, "type": "timeseries",
+          "title": "Transactions by Category",
+          "gridPos": { "x": 12, "y": 15, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "lineWidth": 2, "fillOpacity": 10 }
+            }
+          },
+          "targets": [{
+            "expr": "sum by (category) (financeguard_transactions_created_total)",
+            "legendFormat": "{{category}}"
+          }]
+        },
+
+        {
           "id": 10, "type": "row",
           "title": "🔄 Deployments",
-          "gridPos": { "x": 0, "y": 14, "w": 24, "h": 1 },
+          "gridPos": { "x": 0, "y": 24, "w": 24, "h": 1 },
           "collapsed": false
         },
 
         {
           "id": 11, "type": "table",
           "title": "Deployment Replica Status",
-          "gridPos": { "x": 0, "y": 15, "w": 24, "h": 8 },
+          "gridPos": { "x": 0, "y": 25, "w": 24, "h": 8 },
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "options": {
             "sortBy": [{ "desc": false, "displayName": "Namespace" }],

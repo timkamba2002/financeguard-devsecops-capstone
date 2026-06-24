@@ -14,7 +14,7 @@ data:
       "timezone": "browser",
       "schemaVersion": 38,
       "refresh": "30s",
-      "time": { "from": "now-1h", "to": "now" },
+      "time": { "from": "now-3h", "to": "now" },
       "templating": {
         "list": [
           {
@@ -28,6 +28,19 @@ data:
               { "text": "frontend", "value": "financeguard-frontend",  "selected": false }
             ],
             "query": ".*,financeguard-backend,financeguard-frontend"
+          },
+          {
+            "name": "namespace",
+            "type": "custom",
+            "label": "Namespace",
+            "current": { "text": "All", "value": ".*" },
+            "options": [
+              { "text": "All",     "value": ".*",       "selected": true },
+              { "text": "dev",     "value": "dev",      "selected": false },
+              { "text": "staging", "value": "staging",  "selected": false },
+              { "text": "prod",    "value": "prod",     "selected": false }
+            ],
+            "query": ".*,dev,staging,prod"
           },
           {
             "name": "level",
@@ -55,7 +68,7 @@ data:
 
         {
           "id": 2, "type": "logs",
-          "title": "Application Logs — $app [$level]",
+          "title": "Application Logs — $namespace / $app [$level]",
           "gridPos": { "x": 0, "y": 1, "w": 24, "h": 14 },
           "datasource": { "type": "loki", "uid": "loki" },
           "options": {
@@ -63,13 +76,13 @@ data:
             "enableLogDetails": true,
             "prettifyLogMessage": false,
             "showCommonLabels": false,
-            "showLabels": false,
+            "showLabels": true,
             "showTime": true,
             "sortOrder": "Descending",
             "wrapLogMessage": true
           },
           "targets": [{
-            "expr": "{job=~\"$app\", level=~\"$level\"}",
+            "expr": "{app=~\"$app\", namespace=~\"$namespace\", level=~\"$level\"}",
             "legendFormat": "",
             "maxLines": 500,
             "refId": "A"
@@ -93,13 +106,13 @@ data:
               "custom": { "lineWidth": 1, "fillOpacity": 20, "drawStyle": "bars" }
             },
             "overrides": [
-              { "matcher": { "id": "byName", "options": "ERROR" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
-              { "matcher": { "id": "byName", "options": "WARN" },  "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] },
-              { "matcher": { "id": "byName", "options": "INFO" },  "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }] }
+              { "matcher": { "id": "byName", "options": "ERROR" }, "properties": [{ "id": "color", "value": { "fixedColor": "red",    "mode": "fixed" } }] },
+              { "matcher": { "id": "byName", "options": "WARN"  }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] },
+              { "matcher": { "id": "byName", "options": "INFO"  }, "properties": [{ "id": "color", "value": { "fixedColor": "blue",   "mode": "fixed" } }] }
             ]
           },
           "targets": [{
-            "expr": "sum by (level) (count_over_time({job=~\"$app\"}[5m]))",
+            "expr": "sum by (level) (count_over_time({app=~\"$app\", namespace=~\"$namespace\"}[5m]))",
             "legendFormat": "{{level}}",
             "refId": "A"
           }]
@@ -118,7 +131,7 @@ data:
             "wrapLogMessage": true
           },
           "targets": [{
-            "expr": "{job=~\"$app\", level=\"ERROR\"} or {job=~\"$app\"} |= \"exception\"",
+            "expr": "{app=~\"$app\", namespace=~\"$namespace\", level=\"ERROR\"}",
             "maxLines": 100,
             "refId": "A"
           }]
@@ -133,7 +146,7 @@ data:
 
         {
           "id": 7, "type": "timeseries",
-          "title": "Log Lines per Minute",
+          "title": "Log Lines per Minute by App",
           "gridPos": { "x": 0, "y": 25, "w": 24, "h": 7 },
           "datasource": { "type": "loki", "uid": "loki" },
           "fieldConfig": {
@@ -143,8 +156,8 @@ data:
             }
           },
           "targets": [{
-            "expr": "sum by (job) (rate({job=~\"$app\"}[1m]))",
-            "legendFormat": "{{job}}",
+            "expr": "sum by (app) (rate({app=~\"$app\", namespace=~\"$namespace\"}[1m]))",
+            "legendFormat": "{{app}}",
             "refId": "A"
           }]
         }

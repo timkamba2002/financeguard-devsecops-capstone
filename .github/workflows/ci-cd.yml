@@ -551,7 +551,7 @@ jobs:
         with:
           target:        ${{ steps.alb.outputs.target }}
           fail_action:   false
-          artifact_name: zap-baseline-dev-${{ github.sha }}
+          artifact_name: zap-baseline-dev-${{ github.run_number }}
 
       - name: "📋 Write ZAP dev summary"
         if: always()
@@ -776,7 +776,7 @@ jobs:
         with:
           target:        ${{ steps.alb.outputs.target }}
           fail_action:   false    # DEMO ONLY — set to true in production
-          artifact_name: zap-full-staging-${{ github.sha }}
+          artifact_name: zap-full-staging-${{ github.run_number }}
 
       - name: "📋 Write ZAP staging summary"
         if: always()

@@ -1,20 +1,14 @@
 # Loki stack Helm values (loki-stack chart = Loki + Promtail)
-# Aggregates logs from all pods across dev/staging/prod namespaces.
-# Promtail daemonset ships pod logs to Loki; Grafana queries via Loki datasource.
 #
 # Install: helm upgrade --install loki grafana/loki-stack \
 #            --namespace monitoring -f this-file.yaml --version 2.10.2
 
 loki:
   enabled: true
-
-  # Monolithic (single-binary) mode — sufficient for a capstone cluster.
-  # For production scale, switch to loki.isDistributed: true + object storage.
   isDistributed: false
 
   persistence:
-    enabled: true
-    size: 10Gi
+    enabled: false   # EKS Fargate: EBS PVCs can't bind — use emptyDir (data lost on restart)
 
   config:
     auth_enabled: false
@@ -44,7 +38,7 @@ loki:
             period: 24h
 
     limits_config:
-      retention_period: 744h    # 31 days
+      retention_period: 744h
       reject_old_samples: true
       reject_old_samples_max_age: 168h
       ingestion_rate_mb: 16
@@ -62,49 +56,11 @@ loki:
       cpu:    500m
       memory: 512Mi
 
-# ── Promtail (DaemonSet — ships pod logs → Loki) ──────────────────────────────
+# Promtail is a DaemonSet — EKS Fargate does not support DaemonSets.
+# Disabled here. Logs reach Loki via the OTel Collector instead (OTLP → Loki exporter).
 promtail:
-  enabled: true
+  enabled: false
 
-  config:
-    clients:
-      - url: http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
-
-    snippets:
-      pipelineStages:
-        # Parse JSON logs from the FastAPI backend (structlog / uvicorn)
-        - match:
-            selector: '{app=~"financeguard-backend.*"}'
-            stages:
-              - json:
-                  expressions:
-                    level:     level
-                    message:   message
-                    request_id: request_id
-                    path:      path
-              - labels:
-                  level:
-                  request_id:
-              - output:
-                  source: message
-
-        # Add environment label from pod namespace
-        - labeldrop: []
-        - static_labels:
-            environment: "{{ .Labels.namespace }}"
-
-  tolerations:
-    - effect: NoSchedule
-      operator: Exists
-
-  resources:
-    requests:
-      cpu:    50m
-      memory: 64Mi
-    limits:
-      cpu:    200m
-      memory: 128Mi
-
-# ── Grafana (disabled here — deployed via prometheus-stack chart) ─────────────
+# Grafana deployed via prometheus-stack chart
 grafana:
   enabled: false

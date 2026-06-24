@@ -10,8 +10,7 @@ grafana:
   adminPassword: "FinanceGuard2024!"  # change before production: use a K8s secret
 
   persistence:
-    enabled: true
-    size: 5Gi
+    enabled: false   # EKS Fargate: no EBS StorageClass — use emptyDir (data lost on restart, fine for demo)
 
   # Pre-configured datasources: Prometheus, Loki, Tempo
   additionalDataSources:
@@ -78,13 +77,14 @@ prometheus:
   prometheusSpec:
     retention: 15d
     retentionSize: "10GB"
-    storageSpec:
-      volumeClaimTemplate:
-        spec:
-          accessModes: [ ReadWriteOnce ]
-          resources:
-            requests:
-              storage: 20Gi
+    # storageSpec disabled — EKS Fargate cannot bind EBS PVCs (no EC2 nodes)
+    # storageSpec:
+    #   volumeClaimTemplate:
+    #     spec:
+    #       accessModes: [ ReadWriteOnce ]
+    #       resources:
+    #         requests:
+    #           storage: 20Gi
 
     # Pick up ServiceMonitor, PrometheusRule resources in any namespace
     serviceMonitorSelectorNilUsesHelmValues: false
@@ -123,13 +123,14 @@ prometheus:
 alertmanager:
   enabled: true
   alertmanagerSpec:
-    storage:
-      volumeClaimTemplate:
-        spec:
-          accessModes: [ ReadWriteOnce ]
-          resources:
-            requests:
-              storage: 2Gi
+    # storage disabled — EKS Fargate cannot bind EBS PVCs
+    # storage:
+    #   volumeClaimTemplate:
+    #     spec:
+    #       accessModes: [ ReadWriteOnce ]
+    #       resources:
+    #         requests:
+    #           storage: 2Gi
 
     resources:
       requests:
@@ -175,8 +176,13 @@ alertmanager:
 kube-state-metrics:
   enabled: true
 
+# node-exporter uses a DaemonSet — disabled on EKS Fargate because Fargate
+# has no EC2 nodes to schedule DaemonSet pods on.
 nodeExporter:
-  enabled: true
+  enabled: false
+
+prometheus-node-exporter:
+  enabled: false
 
 # ── Default alert rules ───────────────────────────────────────────────────────
 defaultRules:

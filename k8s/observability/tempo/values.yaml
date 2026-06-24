@@ -42,8 +42,7 @@ tempo:
   retention: 48h    # traces retained 48h (extend for production)
 
 persistence:
-  enabled: true
-  size: 10Gi
+  enabled: false   # EKS Fargate: EBS PVCs can't bind — traces held in emptyDir (ephemeral, fine for demo)
 
 resources:
   requests:

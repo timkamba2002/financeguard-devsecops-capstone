@@ -28,6 +28,9 @@ autoscaling:
   maxReplicas: 5
   targetCPUUtilizationPercentage: 80
 
+ingress:
+  enabled: false   # overridden true in values-<env>.yaml
+
 envFrom:
   - secretRef:
       name: financeguard-db-secret

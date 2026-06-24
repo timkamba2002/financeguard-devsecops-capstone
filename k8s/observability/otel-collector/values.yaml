@@ -78,6 +78,18 @@ config:
           action: upsert
           value:  "{{.Namespace}}"
 
+    # Copy k8s resource attributes to simple names used as Loki stream labels.
+    # The loki exporter promotes resource attributes listed in loki.resource.labels.
+    # Using short names (namespace, app, pod) matches the dashboard LogQL queries.
+    transform/loki_labels:
+      log_statements:
+        - context: resource
+          statements:
+            - set(attributes["namespace"], attributes["k8s.namespace.name"])
+            - set(attributes["app"], attributes["service.name"])
+            - set(attributes["pod"], attributes["k8s.pod.name"])
+            - set(attributes["loki.resource.labels"], "namespace,app,pod,level")
+
   exporters:
     # Traces → Tempo
     otlp/tempo:
@@ -92,14 +104,13 @@ config:
         insecure: true
 
     # Logs → Loki
-    # The `labels` key was removed in otel-collector-contrib 0.79+.
-    # Resource attributes (set by k8sattributes processor) are promoted to
-    # Loki stream labels automatically via the default_labels_enabled setting.
+    # loki.resource.labels (set by transform/loki_labels) controls which resource
+    # attributes become Loki stream labels: namespace, app, pod, level.
     loki:
       endpoint: "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
       default_labels_enabled:
         exporter: false
-        job:      true
+        job:      false
 
     # Debug exporter (remove in production)
     debug:
@@ -119,7 +130,7 @@ config:
 
       logs:
         receivers:  [ otlp ]
-        processors: [ memory_limiter, k8sattributes, batch ]
+        processors: [ memory_limiter, k8sattributes, transform/loki_labels, batch ]
         exporters:  [ loki ]
 
     telemetry:

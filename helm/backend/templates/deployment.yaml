@@ -38,7 +38,9 @@ spec:
             - name: OTEL_SERVICE_NAME
               value: "financeguard-backend"
             - name: OTEL_RESOURCE_ATTRIBUTES
-              value: "deployment.environment={{ .Values.env.ENVIRONMENT }}"
+              value: "deployment.environment={{ .Values.env.ENVIRONMENT }},k8s.namespace.name={{ .Release.Namespace }}"
+            - name: ENVIRONMENT
+              value: {{ .Values.env.ENVIRONMENT | quote }}
           resources:
             limits:
               cpu:    {{ .Values.resources.limits.cpu }}

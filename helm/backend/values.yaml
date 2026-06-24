@@ -37,7 +37,7 @@ ingress:
 otelSidecar:
   enabled: false   # overridden true in values-<env>.yaml
   version: "0.100.0"
-  centralCollectorEndpoint: "otel-collector.monitoring.svc.cluster.local:4317"
+  centralCollectorEndpoint: "otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4317"
 
 envFrom:
   - secretRef:

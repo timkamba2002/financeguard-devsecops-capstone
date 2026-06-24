@@ -70,6 +70,11 @@ prometheus:
     #         requests:
     #           storage: 20Gi
 
+    # Enable remote write receiver so OTel Collector can push metrics in
+    additionalArgs:
+      - name: web.enable-remote-write-receiver
+        value: ""
+
     # Pick up ServiceMonitor, PrometheusRule resources in any namespace
     serviceMonitorSelectorNilUsesHelmValues: false
     ruleSelectorNilUsesHelmValues: false

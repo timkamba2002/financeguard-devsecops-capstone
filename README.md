@@ -275,10 +275,10 @@ Appendix — quick references
   - Prod: http://k8s-prod-financeg-6fa9951b70-799874628.us-east-1.el.amazonaws.com
 
 - Grafana:
-  - Root dashboards: http://k8s-monitori-promethe-edbf634ada-1678049100.us-east-1.el.amazonaws.com/dashboards
-  - FinanceGuard Overview: http://k8s-monitori-promethe-edbf634ada-1678049100.us-east-1.el.amazonaws.com/d/financeguard-overview
-  - Logs Explorer: http://k8s-monitori-promethe-edbf634ada-1678049100.us-east-1.el.amazonaws.com/explore
-  - Traces / Tempo: http://k8s-monitori-promethe-edbf634ada-1678049100.us-east-1.el.amazonaws.com/explore?tab=traces
+  - Root dashboards: http://k8s-monitori-promethe-edbf634ada-1678049100.us-east-1.elb.amazonaws.com/dashboards
+  - FinanceGuard Overview: http://k8s-monitori-promethe-edbf634ada-1678049100.us-east-1.elb.amazonaws.com/d/financeguard-overview
+  - Logs Explorer: http://k8s-monitori-promethe-edbf634ada-1678049100.us-east-1.elb.amazonaws.com/explore
+  - Traces / Tempo: http://k8s-monitori-promethe-edbf634ada-1678049100.us-east-1.elb.amazonaws.com/explore?tab=traces
 
 - Key runbooks
   - Promotion: How to approve staging/prod in GitHub Environments (link to your repo's environment docs).

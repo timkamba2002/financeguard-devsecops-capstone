@@ -78,9 +78,9 @@ Each environment is a separate deployment with its own database, backend, and fr
 Current frontend endpoints (replace as needed):
 | Environment | Frontend URL |
 |---|---|
-| Dev | http://k8s-dev-financeg-4854460a1f-1613697042.us-east-1.el.amazonaws.com |
-| Staging | http://k8s-staging-financeg-4dea2db5a2-1371325497.us-east-1.el.amazonaws.com |
-| Prod | http://k8s-prod-financeg-6fa9951b70-799874628.us-east-1.el.amazonaws.com |
+| Dev | http://k8s-dev-financeg-4854460a1f-1613697042.us-east-1.elb.amazonaws.com |
+| Staging | http://k8s-staging-financeg-4dea2db5a2-1371325497.us-east-1.elb.amazonaws.com |
+| Prod | http://k8s-prod-financeg-6fa9951b70-799874628.us-east-1.elb.amazonaws.com |
 
 Environment differences
 | Feature | Dev | Staging | Prod |

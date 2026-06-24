@@ -113,11 +113,11 @@ prometheus:
 
     resources:
       requests:
-        cpu:    500m
-        memory: 1Gi
+        cpu:    200m
+        memory: 512Mi
       limits:
-        cpu:    "2"
-        memory: 2Gi
+        cpu:    "1"
+        memory: 1Gi
 
 # ── Alertmanager ─────────────────────────────────────────────────────────────
 alertmanager:

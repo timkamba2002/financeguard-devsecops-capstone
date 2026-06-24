@@ -15,4 +15,4 @@ ingress:
 env:
   # After first deploy, run: kubectl get ingress -n staging -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'
   # then update this value and re-run the pipeline or commit the change.
-  BACKEND_API_URL: "http://STAGING_BACKEND_ALB_REPLACE_AFTER_FIRST_DEPLOY"
+  BACKEND_API_URL: "http://k8s-staging-financeg-1bbd3e4074-599551863.us-east-1.elb.amazonaws.com"

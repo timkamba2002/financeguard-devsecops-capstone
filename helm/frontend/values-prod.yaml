@@ -7,7 +7,7 @@ image:
 env:
   # After first deploy, run: kubectl get ingress -n prod -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'
   # For production, consider registering a real domain via Route53 and using HTTPS.
-  BACKEND_API_URL: "https://PROD_BACKEND_ALB_REPLACE_AFTER_FIRST_DEPLOY"
+  BACKEND_API_URL: "http://k8s-prod-financeg-9be229762b-2066741916.us-east-1.elb.amazonaws.com"
 
 resources:
   limits:

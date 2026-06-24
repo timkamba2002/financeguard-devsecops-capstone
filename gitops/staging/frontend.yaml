@@ -17,7 +17,7 @@ spec:
         - values-staging.yaml
       parameters:
         - name: image.tag
-          value: "2e2d547e7b84da0f6228730be4dd7ac7ecd50e7f"
+          value: "ee070f78bdde82f497836289305d10163c2651a9"
   destination:
     server: https://kubernetes.default.svc
     namespace: staging
